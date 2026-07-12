@@ -9,9 +9,19 @@ router.post("/chat", async (req, res) => {
     context?: string;
   };
 
-  const key = process.env.GROQ_API_KEY;
-  if (!key) {
-    res.status(500).send("Missing GROQ_API_KEY — add it in Replit Secrets");
+  // Support both Groq (api.groq.com) and xAI Grok (api.x.ai)
+  const groqKey = process.env.GROQ_API_KEY;
+  const xaiKey = process.env.XAI_API_KEY;
+  const key = groqKey || xaiKey;
+  const apiBase = groqKey
+    ? "https://api.groq.com/openai/v1"
+    : xaiKey
+      ? "https://api.x.ai/v1"
+      : null;
+  const model = groqKey ? "llama-3.3-70b-versatile" : "grok-3-latest";
+
+  if (!key || !apiBase) {
+    res.status(500).send("Missing GROQ_API_KEY or XAI_API_KEY — add one in Replit Secrets");
     return;
   }
 
@@ -20,14 +30,14 @@ router.post("/chat", async (req, res) => {
   }`;
 
   try {
-    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const groqRes = await fetch(`${apiBase}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model,
         stream: true,
         messages: [{ role: "system", content: sys }, ...messages],
       }),
@@ -73,9 +83,18 @@ router.post("/generate-script", async (req, res) => {
     userPrompt?: string;
   };
 
-  const key = process.env.GROQ_API_KEY;
-  if (!key) {
-    res.status(500).send("Missing GROQ_API_KEY — add it in Replit Secrets");
+  const groqKey = process.env.GROQ_API_KEY;
+  const xaiKey = process.env.XAI_API_KEY;
+  const key = groqKey || xaiKey;
+  const apiBase = groqKey
+    ? "https://api.groq.com/openai/v1"
+    : xaiKey
+      ? "https://api.x.ai/v1"
+      : null;
+  const model = groqKey ? "llama-3.3-70b-versatile" : "grok-3-latest";
+
+  if (!key || !apiBase) {
+    res.status(500).send("Missing GROQ_API_KEY or XAI_API_KEY — add one in Replit Secrets");
     return;
   }
 
@@ -105,14 +124,14 @@ ${body.userPrompt ? `USER DIRECTION: ${body.userPrompt}` : ""}
 Write the full podcast script now.`;
 
   try {
-    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const groqRes = await fetch(`${apiBase}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model,
         messages: [
           { role: "system", content: sys },
           { role: "user", content: userMsg },
