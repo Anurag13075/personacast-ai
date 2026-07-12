@@ -9,28 +9,52 @@ export function AudioPlayer({ script, onDuration }: { script: string; onDuration
   const [total, setTotal] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [approxTotal, setApproxTotal] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const lines = parseScriptToLines(script);
-    // Approx: 150 words per minute
-    const words = script.split(/\s+/).length;
-    const est = Math.max(30, Math.round((words / 150) * 60));
-    setApproxTotal(est);
-    onDuration?.(est);
-    const p = new ScriptPlayer();
-    playerRef.current = p;
-    p.load(lines).then(() => setTotal(lines.length));
-    p.setCallbacks((i, t) => {
-      setIdx(i);
-      setElapsed(Math.round((i / Math.max(1, t)) * est));
-    }, () => { setPlaying(false); setIdx(0); setElapsed(0); });
-    return () => p.stop();
-  }, [script]);
+    const initPlayer = async () => {
+      try {
+        const lines = parseScriptToLines(script);
+        // Approx: 150 words per minute
+        const words = script.split(/\s+/).length;
+        const est = Math.max(30, Math.round((words / 150) * 60));
+        setApproxTotal(est);
+        onDuration?.(est);
+        const p = new ScriptPlayer();
+        playerRef.current = p;
+        await p.load(lines);
+        setTotal(lines.length);
+        setError(null);
+        p.setCallbacks((i, t) => {
+          setIdx(i);
+          setElapsed(Math.round((i / Math.max(1, t)) * est));
+        }, () => {
+          setPlaying(false);
+          setIdx(0);
+          setElapsed(0);
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        console.error("Audio player initialization error:", message);
+      }
+    };
+
+    initPlayer();
+    return () => {
+      playerRef.current?.stop();
+    };
+  }, [script, onDuration]);
 
   const toggle = () => {
     if (!playerRef.current) return;
-    if (playing) { playerRef.current.pause(); setPlaying(false); }
-    else { playerRef.current.play(idx); setPlaying(true); }
+    if (playing) {
+      playerRef.current.pause();
+      setPlaying(false);
+    } else {
+      playerRef.current.play(idx);
+      setPlaying(true);
+    }
   };
 
   const reset = () => {
@@ -41,6 +65,18 @@ export function AudioPlayer({ script, onDuration }: { script: string; onDuration
   };
 
   const pct = total ? (idx / total) * 100 : 0;
+
+  if (error) {
+    return (
+      <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+        <p className="font-medium">Audio player error:</p>
+        <p>{error}</p>
+        <p className="mt-2 text-xs text-red-600">
+          This may be due to missing or invalid API keys. Check your environment configuration.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -68,7 +104,9 @@ export function AudioPlayer({ script, onDuration }: { script: string; onDuration
             <span>{fmt(elapsed)} / {fmt(approxTotal)}</span>
             <div className="flex items-center gap-2">
               <Volume2 className="h-3.5 w-3.5" />
-              <button onClick={reset} className="rounded p-1 hover:bg-accent"><RotateCcw className="h-3.5 w-3.5" /></button>
+              <button onClick={reset} className="rounded p-1 hover:bg-accent">
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
               <span className="rounded border border-border px-2 py-0.5">1x</span>
             </div>
           </div>
@@ -79,6 +117,7 @@ export function AudioPlayer({ script, onDuration }: { script: string; onDuration
 }
 
 function fmt(s: number) {
-  const m = Math.floor(s / 60), r = s % 60;
+  const m = Math.floor(s / 60),
+    r = s % 60;
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }
