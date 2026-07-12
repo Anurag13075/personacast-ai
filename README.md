@@ -4,7 +4,7 @@
 
 ### Turn any PDF into an insightful, listenable podcast conversation.
 
-Upload a document → AI reads it → two AI hosts discuss it → you get a script, cover art, and audio.
+Upload a document → AI reads it → two AI hosts discuss it → you get a script, cover art, and smooth audio.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-96.5%25-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
