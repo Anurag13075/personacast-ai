@@ -4,6 +4,10 @@ import { ScriptPlayer, parseScriptToLines } from "@/lib/tts";
 
 export function AudioPlayer({ script, onDuration }: { script: string; onDuration?: (s: number) => void }) {
   const playerRef = useRef<ScriptPlayer | null>(null);
+  // Keep onDuration in a ref so it never triggers the effect
+  const onDurationRef = useRef(onDuration);
+  useEffect(() => { onDurationRef.current = onDuration; }, [onDuration]);
+
   const [playing, setPlaying] = useState(false);
   const [idx, setIdx] = useState(0);
   const [total, setTotal] = useState(0);
@@ -15,24 +19,26 @@ export function AudioPlayer({ script, onDuration }: { script: string; onDuration
     const initPlayer = async () => {
       try {
         const lines = parseScriptToLines(script);
-        // Approx: 150 words per minute
         const words = script.split(/\s+/).length;
         const est = Math.max(30, Math.round((words / 150) * 60));
         setApproxTotal(est);
-        onDuration?.(est);
+        onDurationRef.current?.(est);
         const p = new ScriptPlayer();
         playerRef.current = p;
         await p.load(lines);
         setTotal(lines.length);
         setError(null);
-        p.setCallbacks((i, t) => {
-          setIdx(i);
-          setElapsed(Math.round((i / Math.max(1, t)) * est));
-        }, () => {
-          setPlaying(false);
-          setIdx(0);
-          setElapsed(0);
-        });
+        p.setCallbacks(
+          (i, t) => {
+            setIdx(i);
+            setElapsed(Math.round((i / Math.max(1, t)) * est));
+          },
+          () => {
+            setPlaying(false);
+            setIdx(0);
+            setElapsed(0);
+          },
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
@@ -41,10 +47,8 @@ export function AudioPlayer({ script, onDuration }: { script: string; onDuration
     };
 
     initPlayer();
-    return () => {
-      playerRef.current?.stop();
-    };
-  }, [script, onDuration]);
+    return () => { playerRef.current?.stop(); };
+  }, [script]); // onDuration intentionally excluded — accessed via ref
 
   const toggle = () => {
     if (!playerRef.current) return;

@@ -1,0 +1,9 @@
+{
+  "buildCommand": "pnpm --filter @workspace/heva-ai run build",
+  "outputDirectory": "artifacts/heva-ai/dist/public",
+  "installCommand": "pnpm install",
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" }
+  ]
+}
