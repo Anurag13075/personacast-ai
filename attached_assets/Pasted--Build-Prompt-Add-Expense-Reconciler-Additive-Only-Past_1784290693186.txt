@@ -1,0 +1,90 @@
+# Build Prompt: Add Expense Reconciler (Additive Only)
+
+Paste this into Claude Code in the existing repo.
+
+---
+
+Do NOT touch, refactor, or remove any existing code, routes, functionality, or dependencies. PersonaCast (document-to-podcast) must keep working exactly as it does now. Everything below is a net-new addition living alongside it — new routes, new tables, new components. Do not modify the existing pipeline, existing Supabase tables, or existing tech stack. Use only what's already in this repo: Next.js App Router, Supabase (Postgres + Storage), TanStack Query, Groq API, Anthropic API. No new services, no new libraries unless something here is genuinely missing (e.g. zod for validation, add only that).
+
+## Product: Expense Reconciler (new, separate feature)
+
+User uploads a receipt photo AND a voice memo explaining the expense. The product reconciles both into a structured, editable, exportable expense entry, flagging any mismatch between what was claimed and what the receipt shows.
+
+## Pipeline — same 3-step structure, build fresh, don't touch the podcast pipeline
+
+**Step 1 — Audio Understanding**
+Input: `{ audio_file_url }`
+Groq Whisper transcription → short LLM call extracting structured intent.
+Output:
+```ts
+type AudioResult = {
+  transcript: string;
+  claimed_purpose: string | null;
+  claimed_amount: number | null;
+  claimed_counterparty: string | null;
+  claimed_date: string | null;
+  confidence: number;
+}
+```
+
+**Step 2 — Receipt Understanding**
+Input: `{ image_base64 }`
+Single Anthropic vision call (direct multimodal call, not an OCR service) extracting structured fields with per-field confidence.
+Output:
+```ts
+type ReceiptResult = {
+  vendor: string;
+  line_items: { description: string; amount: number }[];
+  total: number;
+  date: string | null;
+  category_guess: string;
+  field_confidence: Record<string, number>;
+}
+```
+
+**Step 3 — Reconciliation** (the real cross-modal reasoning step — both Step 1 and Step 2 outputs go into one Anthropic call together, model explicitly reasons about agreement/disagreement before producing JSON, not a merge)
+Input: `{ audio_result: AudioResult, receipt_result: ReceiptResult }`
+Output:
+```ts
+type ReconciledExpense = {
+  category: string;
+  amount: number;
+  vendor: string;
+  date: string;
+  business_justification: string;
+  flags: { field: string; reason: string; severity: "low" | "medium" | "high" }[];
+  overall_confidence: number;
+}
+```
+
+Flags must reflect genuine detected mismatches (amount vs claimed_amount, vendor vs claimed_counterparty, category vs line items) — instruct the model to reason step-by-step before emitting flags, not output a cosmetic confidence number.
+
+## New screens (additive routes, don't touch existing pages)
+
+1. `/expenses/new` — upload receipt image + record/upload voice memo, show estimated processing time on submit.
+2. `/expenses/[id]` — processing view, all 3 steps shown live as they stream in (poll or SSE, whichever is faster to wire up), each step shows a human-readable summary of what was understood before the final output appears.
+3. `/expenses/[id]/review` — reconciled fields shown as an editable form, flags shown inline per field with severity styling, edits tracked (not silently overwritten), export buttons for JSON and PDF/Markdown.
+
+## New Supabase tables (additive, don't alter existing schema)
+- `expense_runs` (id, user_id, created_at, status, audio_result jsonb, receipt_result jsonb, reconciled jsonb, overall_confidence)
+- `expense_edits` (id, run_id, field, old_value, new_value, edited_at)
+- `/expenses/history` — list past runs
+
+## Non-negotiables
+- Confidence/uncertainty visibly flagged in the UI, not hidden in a tooltip
+- Progressive output — no blank loading screen, each step's result appears as it completes
+- Edits tracked with old/new value, never silent overwrite
+- Export produces both JSON and a formatted document
+- Validate every step's output against its schema (zod) before persisting
+
+## Build order
+1. New Supabase tables/migrations
+2. Step 1 + Step 2 routes, test standalone with curl/sample files
+3. Step 3 reconciliation route — verify flags actually fire on a deliberately mismatched sample pair
+4. `/expenses/new`
+5. `/expenses/[id]` streaming UI
+6. `/expenses/[id]/review` with edit tracking + export
+7. `/expenses/history`
+8. Deploy, smoke test with fresh sample inputs
+
+Confirm with me before installing any new dependency or touching any file outside the new `expenses` feature area.
