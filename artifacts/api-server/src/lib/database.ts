@@ -20,6 +20,7 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'pending',
     audio_filename TEXT,
     image_filename TEXT,
+    policy_notes TEXT,
     audio_result TEXT,
     receipt_result TEXT,
     reconciled TEXT,
@@ -38,12 +39,16 @@ db.exec(`
   );
 `);
 
+// Migration: add policy_notes column to databases created before this column existed
+try { db.exec(`ALTER TABLE expense_runs ADD COLUMN policy_notes TEXT`); } catch { /* already exists */ }
+
 export type ExpenseRun = {
   id: string;
   created_at: string;
   status: string;
   audio_filename: string | null;
   image_filename: string | null;
+  policy_notes: string | null;
   audio_result: string | null;
   receipt_result: string | null;
   reconciled: string | null;
@@ -62,8 +67,8 @@ export type ExpenseEdit = {
 
 export const queries = {
   createRun: db.prepare(`
-    INSERT INTO expense_runs (id, created_at, status, audio_filename, image_filename)
-    VALUES (?, ?, 'pending', ?, ?)
+    INSERT INTO expense_runs (id, created_at, status, audio_filename, image_filename, policy_notes)
+    VALUES (?, ?, 'pending', ?, ?, ?)
   `),
 
   updateRunStatus: db.prepare(`

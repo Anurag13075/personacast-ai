@@ -28,7 +28,8 @@ async function runPipeline(
   audioFilename: string,
   audioMimeType: string,
   imageBuffer: Buffer,
-  imageMimeType: string
+  imageMimeType: string,
+  policyNotes?: string
 ) {
   try {
     // Step 1 — Audio understanding
@@ -47,8 +48,8 @@ async function runPipeline(
 
     logger.info({ runId }, "Pipeline: step 3 — reconciling");
 
-    // Step 3 — Cross-modal reconciliation
-    const reconciled = await reconcileExpense(audioResult, receiptResult);
+    // Step 3 — Cross-modal reconciliation (+ optional policy notes)
+    const reconciled = await reconcileExpense(audioResult, receiptResult, policyNotes);
     queries.updateReconciled.run(
       JSON.stringify(reconciled),
       reconciled.overall_confidence,
@@ -82,12 +83,14 @@ router.post(
 
     const runId = randomUUID();
     const now = new Date().toISOString();
+    const policyNotes = typeof req.body?.policyNotes === "string" ? req.body.policyNotes.trim() : undefined;
 
     queries.createRun.run(
       runId,
       now,
       audioFile.originalname,
-      receiptFile.originalname
+      receiptFile.originalname,
+      policyNotes ?? null
     );
 
     // Fire-and-forget pipeline
@@ -98,7 +101,8 @@ router.post(
         audioFile.originalname,
         audioFile.mimetype,
         receiptFile.buffer,
-        receiptFile.mimetype
+        receiptFile.mimetype,
+        policyNotes
       );
     });
 

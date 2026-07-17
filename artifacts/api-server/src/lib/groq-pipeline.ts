@@ -181,9 +181,14 @@ Field confidence rules:
 // ─── Step 3: Cross-modal reconciliation ───────────────────────────────────────
 export async function reconcileExpense(
   audioResult: AudioResult,
-  receiptResult: ReceiptResult
+  receiptResult: ReceiptResult,
+  policyNotes?: string
 ): Promise<ReconciledExpense> {
   const key = getKey();
+
+  const policySection = policyNotes?.trim()
+    ? `\n\nPOLICY & CONTEXT NOTES (provided by the user — apply these rules when flagging):\n${policyNotes.trim()}\n\nFor each policy rule, check if this expense complies. If it violates a rule, add a flag with severity "high" if it's a hard rule (e.g. amount limit, required field) or "medium" if it's a soft rule (e.g. preferred category). Reference the specific rule in the flag reason.`
+    : "";
 
   const res = await fetch(`${GROQ_API_BASE}/chat/completions`, {
     method: "POST",
@@ -197,7 +202,7 @@ export async function reconcileExpense(
         {
           role: "system",
           content: `You are a senior expense auditor performing cross-modal reconciliation.
-You receive data from two independent sources: a voice memo and a receipt scan.
+You receive data from two independent sources: a voice memo and a receipt scan, plus optional policy notes.
 Your job is to reason explicitly about agreement and disagreement, then produce a structured report.
 
 REASONING PROTOCOL (follow in order):
@@ -206,11 +211,12 @@ REASONING PROTOCOL (follow in order):
 3. Compare claimed_date vs receipt date — flag if different
 4. Assess whether claimed_purpose matches receipt line items — flag if implausible
 5. Consider low field_confidence values as additional uncertainty — flag accordingly
-6. Set overall_confidence based on how well the two sources agree
+6. Check each policy/context note and flag any violations
+7. Set overall_confidence based on how well the two sources agree and policy compliance
 
 Flag severity guide:
-- "high": amount mismatch > 10%, vendor mismatch, clearly implausible purpose
-- "medium": amount mismatch 1-10%, date mismatch, purpose partially unclear
+- "high": amount mismatch > 10%, vendor mismatch, clearly implausible purpose, hard policy violation
+- "medium": amount mismatch 1-10%, date mismatch, purpose partially unclear, soft policy concern
 - "low": minor discrepancies, low confidence on minor fields
 
 Return ONLY valid JSON — no markdown fences, no extra text:
@@ -231,7 +237,7 @@ Return ONLY valid JSON — no markdown fences, no extra text:
 ${JSON.stringify(audioResult, null, 2)}
 
 RECEIPT DATA:
-${JSON.stringify(receiptResult, null, 2)}
+${JSON.stringify(receiptResult, null, 2)}${policySection}
 
 Reason step-by-step and produce the reconciled expense report.`,
         },

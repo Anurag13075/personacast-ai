@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
-import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
+import { Route, Switch, Router as WouterRouter } from 'wouter';
+import Landing from '@/pages/Landing';
 import ExpenseNew from '@/pages/expenses/New';
 import ExpenseProcessing from '@/pages/expenses/Processing';
 import ExpenseReview from '@/pages/expenses/Review';
@@ -12,9 +13,7 @@ const queryClient = new QueryClient();
 function Router() {
   return (
     <Switch>
-      <Route path="/">
-        {() => <Redirect to="/expenses/new" />}
-      </Route>
+      <Route path="/" component={Landing} />
       <Route path="/expenses/new" component={ExpenseNew} />
       <Route path="/expenses/history" component={ExpenseHistory} />
       <Route path="/expenses/:id/review" component={ExpenseReview} />

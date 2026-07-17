@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { Upload, Mic, FileAudio, Image, ArrowRight, History, Loader2, Clock } from 'lucide-react';
+import { Upload, Mic, FileAudio, Image, ArrowRight, History, Loader2, Clock, Sparkles } from 'lucide-react';
 
 export default function ExpenseNew() {
   const [, navigate] = useLocation();
   const [receipt, setReceipt] = useState<File | null>(null);
   const [audio, setAudio] = useState<File | null>(null);
+  const [policyNotes, setPolicyNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const receiptRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLInputElement>(null);
@@ -36,6 +37,7 @@ export default function ExpenseNew() {
       const form = new FormData();
       form.append('receipt', receipt);
       form.append('audio', audio);
+      if (policyNotes.trim()) form.append('policyNotes', policyNotes.trim());
       const res = await fetch('/api/expenses', { method: 'POST', body: form });
       if (!res.ok) {
         const err = await res.json() as { error?: string };
@@ -50,75 +52,88 @@ export default function ExpenseNew() {
   };
 
   return (
-    <div className="min-h-screen bg-[#05060f] text-white">
+    <div className="min-h-screen bg-white text-[#09090b]" style={{ fontFamily: "'Inter', sans-serif" }}>
       {/* Header */}
-      <header className="border-b border-white/10 px-6 py-4">
-        <div className="mx-auto flex max-w-3xl items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg shadow-blue-500/30">
-              <span className="text-sm font-bold">$</span>
+      <header className="border-b border-[#e4e4e7] bg-white px-6 py-4">
+        <div className="mx-auto flex max-w-2xl items-center justify-between">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center gap-2.5"
+          >
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#09090b]">
+              <span className="text-xs font-bold text-white">$</span>
             </div>
-            <div>
-              <h1 className="text-sm font-semibold">Expense Reconciler</h1>
-              <p className="text-[11px] text-white/40">AI-powered receipt + voice memo analysis</p>
-            </div>
-          </div>
-          <a
-            href="/expenses/history"
-            onClick={(e) => { e.preventDefault(); navigate('/expenses/history'); }}
-            className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/60 hover:border-white/20 hover:text-white"
+            <span className="text-sm font-semibold tracking-tight">Expense Reconciler</span>
+          </button>
+          <button
+            onClick={() => navigate('/expenses/history')}
+            className="flex items-center gap-2 rounded-lg border border-[#e4e4e7] px-3 py-1.5 text-xs font-medium text-[#52525b] hover:border-[#a1a1aa] hover:text-[#09090b] transition"
           >
             <History className="h-3.5 w-3.5" /> History
-          </a>
+          </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 py-12">
-        <div className="mb-10 text-center">
-          <span className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs text-blue-400">
-            3-step AI pipeline · Whisper + Vision + Reconciliation
-          </span>
-          <h2 className="mt-4 text-3xl font-semibold tracking-tight">
-            Reconcile an Expense
-          </h2>
-          <p className="mt-2 text-sm text-white/50">
-            Upload a receipt photo and a voice memo explaining the expense.
-            The AI will extract, cross-check, and flag any mismatches.
+      <main className="mx-auto max-w-2xl px-6 py-12">
+        <div className="mb-10">
+          <h1 className="text-2xl font-bold tracking-tight">Reconcile an expense</h1>
+          <p className="mt-1.5 text-sm text-[#71717a]">
+            Upload a receipt and voice memo. The AI cross-checks both and flags any mismatches.
           </p>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2">
-          {/* Receipt upload */}
+        {/* Upload inputs */}
+        <div className="grid gap-4 sm:grid-cols-2">
           <DropZone
             label="Receipt Photo"
             hint="JPG, PNG, WEBP, PDF"
-            icon={<Image className="h-6 w-6" />}
+            icon={<Image className="h-5 w-5" />}
             file={receipt}
-            accept={['image/', '.pdf']}
             inputRef={receiptRef}
             inputAccept="image/*,.pdf"
             onChange={setReceipt}
             onDrop={(e) => handleDrop(e, setReceipt, ['image/', '.pdf'])}
-            color="blue"
           />
-
-          {/* Audio upload */}
           <DropZone
             label="Voice Memo"
             hint="MP3, WAV, M4A, OGG, WEBM"
-            icon={<Mic className="h-6 w-6" />}
+            icon={<Mic className="h-5 w-5" />}
             file={audio}
-            accept={['audio/']}
             inputRef={audioRef}
             inputAccept="audio/*"
             onChange={setAudio}
             onDrop={(e) => handleDrop(e, setAudio, ['audio/'])}
-            color="purple"
           />
         </div>
 
-        {/* Processing estimate */}
-        <div className="mt-6 flex items-center justify-center gap-2 text-xs text-white/30">
+        {/* Policy notes / text input */}
+        <div className="mt-5 rounded-2xl border border-[#e4e4e7] bg-[#fafafa] p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#e4e4e7] bg-white">
+              <Sparkles className="h-3.5 w-3.5 text-[#71717a]" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">Policy & Context Notes <span className="ml-1 text-[11px] font-normal text-[#a1a1aa]">optional</span></p>
+              <p className="text-[11px] text-[#a1a1aa]">Tell the AI your expense rules — it will flag violations and use this as additional context</p>
+            </div>
+          </div>
+          <textarea
+            value={policyNotes}
+            onChange={(e) => setPolicyNotes(e.target.value)}
+            placeholder={`Examples:\n• "Meals over $50 require manager approval"\n• "Client name must appear on all entertainment receipts"\n• "This is for project ACME-Q3-2026"\n• "VAT receipts required — check tax line is present"`}
+            rows={4}
+            className="w-full resize-none rounded-xl border border-[#e4e4e7] bg-white px-4 py-3 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
+          />
+          {policyNotes.trim() && (
+            <p className="mt-2 flex items-center gap-1 text-[11px] text-[#22c55e]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#22c55e]" />
+              AI will apply these rules during reconciliation
+            </p>
+          )}
+        </div>
+
+        {/* Estimated time */}
+        <div className="mt-5 flex items-center justify-center gap-2 text-xs text-[#a1a1aa]">
           <Clock className="h-3.5 w-3.5" />
           Estimated processing time: ~15–25 seconds
         </div>
@@ -127,7 +142,7 @@ export default function ExpenseNew() {
         <button
           onClick={submit}
           disabled={!receipt || !audio || loading}
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#09090b] py-3.5 text-sm font-semibold text-white shadow-lg shadow-black/10 transition hover:bg-[#27272a] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loading ? (
             <><Loader2 className="h-4 w-4 animate-spin" /> Starting analysis…</>
@@ -136,19 +151,19 @@ export default function ExpenseNew() {
           )}
         </button>
 
-        {/* Pipeline info */}
+        {/* Pipeline steps */}
         <div className="mt-10 grid grid-cols-3 gap-3">
           {[
-            { n: '1', label: 'Audio Understanding', desc: 'Whisper transcription + intent extraction' },
-            { n: '2', label: 'Receipt Analysis', desc: 'Vision model reads every line item' },
-            { n: '3', label: 'Reconciliation', desc: 'AI reasons across both modalities' },
+            { n: '1', label: 'Audio Understanding', desc: 'Whisper + LLM intent' },
+            { n: '2', label: 'Receipt Analysis', desc: 'Vision model per-field' },
+            { n: '3', label: 'Reconciliation', desc: 'Cross-modal + policy' },
           ].map((s) => (
-            <div key={s.n} className="rounded-xl border border-white/8 bg-white/3 p-4">
-              <div className="mb-2 flex h-7 w-7 items-center justify-center rounded-lg bg-white/8 text-xs font-bold text-white/60">
+            <div key={s.n} className="rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4">
+              <div className="mb-2 flex h-6 w-6 items-center justify-center rounded-md border border-[#e4e4e7] bg-white text-[11px] font-bold text-[#52525b]">
                 {s.n}
               </div>
-              <p className="text-xs font-medium text-white/80">{s.label}</p>
-              <p className="mt-0.5 text-[11px] text-white/40">{s.desc}</p>
+              <p className="text-[11px] font-semibold text-[#09090b]">{s.label}</p>
+              <p className="mt-0.5 text-[10px] text-[#a1a1aa]">{s.desc}</p>
             </div>
           ))}
         </div>
@@ -158,22 +173,18 @@ export default function ExpenseNew() {
 }
 
 function DropZone({
-  label, hint, icon, file, accept, inputRef, inputAccept, onChange, onDrop, color,
+  label, hint, icon, file, inputRef, inputAccept, onChange, onDrop,
 }: {
   label: string;
   hint: string;
   icon: React.ReactNode;
   file: File | null;
-  accept: string[];
   inputRef: React.RefObject<HTMLInputElement>;
   inputAccept: string;
   onChange: (f: File) => void;
   onDrop: (e: React.DragEvent) => void;
-  color: 'blue' | 'purple';
 }) {
   const [dragging, setDragging] = useState(false);
-  const ring = color === 'blue' ? 'border-blue-500/60 bg-blue-500/5' : 'border-purple-500/60 bg-purple-500/5';
-  const iconBg = color === 'blue' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400';
 
   return (
     <div
@@ -181,7 +192,9 @@ function DropZone({
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => { setDragging(false); onDrop(e); }}
       onClick={() => inputRef.current?.click()}
-      className={`relative flex min-h-[180px] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-6 transition ${dragging ? ring : 'border-white/15 bg-white/3 hover:border-white/25'}`}
+      className={`relative flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-6 transition ${
+        dragging ? 'border-[#09090b] bg-[#f4f4f5]' : file ? 'border-[#09090b] bg-[#fafafa]' : 'border-[#d4d4d8] bg-[#fafafa] hover:border-[#a1a1aa] hover:bg-[#f4f4f5]'
+      }`}
     >
       <input
         ref={inputRef}
@@ -192,28 +205,26 @@ function DropZone({
       />
       {file ? (
         <>
-          <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconBg}`}>
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#e4e4e7] bg-white text-[#09090b]">
             {label.includes('Voice') ? <FileAudio className="h-5 w-5" /> : <Upload className="h-5 w-5" />}
           </div>
           <div className="text-center">
-            <p className="max-w-[160px] truncate text-sm font-medium text-white">{file.name}</p>
-            <p className="mt-0.5 text-[11px] text-white/40">
-              {(file.size / 1024).toFixed(0)} KB · click to change
-            </p>
+            <p className="max-w-[180px] truncate text-sm font-medium text-[#09090b]">{file.name}</p>
+            <p className="mt-0.5 text-[11px] text-[#a1a1aa]">{(file.size / 1024).toFixed(0)} KB · click to change</p>
           </div>
-          <div className="absolute right-3 top-3 rounded-full bg-green-500/20 px-2 py-0.5 text-[10px] font-medium text-green-400">
-            ✓ ready
+          <div className="absolute right-3 top-3 rounded-full bg-[#dcfce7] px-2 py-0.5 text-[10px] font-semibold text-[#16a34a]">
+            ✓
           </div>
         </>
       ) : (
         <>
-          <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconBg}`}>
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#e4e4e7] bg-white text-[#52525b]">
             {icon}
           </div>
           <div className="text-center">
-            <p className="text-sm font-medium text-white/80">{label}</p>
-            <p className="mt-0.5 text-[11px] text-white/40">drag & drop or click to browse</p>
-            <p className="mt-1 text-[10px] text-white/25">{hint}</p>
+            <p className="text-sm font-medium text-[#09090b]">{label}</p>
+            <p className="mt-0.5 text-[11px] text-[#a1a1aa]">drag & drop or click</p>
+            <p className="mt-1 text-[10px] text-[#d4d4d8]">{hint}</p>
           </div>
         </>
       )}
