@@ -71,7 +71,7 @@ router.post(
     { name: "receipt", maxCount: 1 },
     { name: "audio", maxCount: 1 },
   ]),
-  (req, res) => {
+  async (req, res) => {
     const files = req.files as Record<string, Express.Multer.File[]> | undefined;
     const receiptFile = files?.receipt?.[0];
     const audioFile = files?.audio?.[0];
@@ -93,9 +93,11 @@ router.post(
       policyNotes ?? null
     );
 
-    // Fire-and-forget pipeline
-    setImmediate(() => {
-      void runPipeline(
+    if (process.env["VERCEL"]) {
+      // Vercel serverless: run the pipeline synchronously before responding.
+      // setImmediate callbacks are killed when the function returns, so we must
+      // await the full pipeline here. maxDuration: 60 in vercel.json gives us room.
+      await runPipeline(
         runId,
         audioFile.buffer,
         audioFile.originalname,
@@ -104,7 +106,21 @@ router.post(
         receiptFile.mimetype,
         policyNotes
       );
-    });
+    } else {
+      // Local Express server: fire-and-forget so the request returns immediately
+      // and the client can poll /api/expenses/:id for step-by-step progress.
+      setImmediate(() => {
+        void runPipeline(
+          runId,
+          audioFile.buffer,
+          audioFile.originalname,
+          audioFile.mimetype,
+          receiptFile.buffer,
+          receiptFile.mimetype,
+          policyNotes
+        );
+      });
+    }
 
     res.status(201).json({ id: runId, status: "pending" });
   }

@@ -1,18 +1,19 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 
-const rawPort = process.env["PORT"] ?? "3001";
-const port = Number(rawPort);
+// Export the Express app so Vercel (api/index.js) can import it as a serverless function.
+export { app as default };
 
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
+// Only bind to a port when running as a regular Node.js process (not on Vercel).
+if (!process.env["VERCEL"]) {
+  const rawPort = process.env["PORT"] ?? "3001";
+  const port = Number(rawPort);
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
+  if (Number.isNaN(port) || port <= 0) {
+    throw new Error(`Invalid PORT value: "${rawPort}"`);
   }
 
-  logger.info({ port }, "Server listening");
-});
+  app.listen(port, () => {
+    logger.info({ port }, "Server listening");
+  });
+}

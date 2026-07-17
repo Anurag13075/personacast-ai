@@ -5,7 +5,11 @@ import { mkdirSync } from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dataDir = path.resolve(__dirname, "../../../data");
+// On Vercel, /tmp is the only writable directory (ephemeral per cold-start).
+// Locally, persist data next to the project root.
+const dataDir = process.env["VERCEL"]
+  ? "/tmp"
+  : path.resolve(__dirname, "../../../data");
 mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(path.join(dataDir, "expenses.db"));

@@ -1,9 +1,14 @@
 {
-  "buildCommand": "pnpm --filter @workspace/heva-ai run build",
+  "buildCommand": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/heva-ai run build",
   "outputDirectory": "artifacts/heva-ai/dist/public",
   "installCommand": "pnpm install",
   "framework": null,
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
+    { "source": "/api/(.*)", "destination": "/api/index" }
   ]
 }
