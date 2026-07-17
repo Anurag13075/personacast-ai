@@ -7,7 +7,7 @@ import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
 // PORT and BASE_PATH are only required during Replit dev; not needed for Vercel builds.
 const rawPort = process.env.PORT;
-const port = rawPort ? Number(rawPort) : 3000;
+const port = rawPort ? Number(rawPort) : 5000;
 const basePath = process.env.BASE_PATH ?? "/";
 
 export default defineConfig({

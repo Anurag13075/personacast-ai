@@ -1,10 +1,10 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
-import hevaRouter from "./heva";
+import expensesRouter from "./expenses";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(hevaRouter);
+router.use("/expenses", expensesRouter);
 
 export default router;
