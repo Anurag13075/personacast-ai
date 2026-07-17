@@ -43,7 +43,13 @@ export default function ExpenseNew() {
         const err = await res.json() as { error?: string };
         throw new Error(err.error ?? 'Upload failed');
       }
-      const data = await res.json() as { id: string };
+      const data = await res.json() as { id: string; status?: string; reconciled?: unknown };
+      // On Vercel the pipeline runs synchronously and the full result is returned
+      // inline. Cache it in sessionStorage so the Processing/Review pages can
+      // use it without polling a different Lambda instance (which has an empty DB).
+      if (data.status === 'done' || data.reconciled != null) {
+        sessionStorage.setItem(`expense_run_${data.id}`, JSON.stringify(data));
+      }
       navigate(`/expenses/${data.id}`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Upload failed');

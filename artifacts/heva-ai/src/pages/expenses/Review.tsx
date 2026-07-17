@@ -76,6 +76,32 @@ export default function ExpenseReview() {
   const [loading, setLoading] = useState(true);
 
   const fetchRun = async () => {
+    // Prefer the cached result written by New.tsx (present on Vercel where the
+    // pipeline result is returned inline and polling a separate Lambda would 404).
+    const cached = sessionStorage.getItem(`expense_run_${params.id}`);
+    if (cached) {
+      try {
+        const data = JSON.parse(cached) as Run;
+        // Keep the cache so edits can refresh from the API; remove on first API
+        // success below. Using the cache here avoids a 404 on Vercel cold starts.
+        setRun(data);
+        if (data.reconciled) setForm(data.reconciled);
+        setLoading(false);
+        // Still hit the API in the background so edits list stays up-to-date.
+        fetch(`/api/expenses/${params.id}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((fresh: Run | null) => {
+            if (fresh) {
+              sessionStorage.removeItem(`expense_run_${params.id}`);
+              setRun(fresh);
+              if (fresh.reconciled) setForm(fresh.reconciled);
+            }
+          })
+          .catch(() => { /* API not available — cached data is sufficient */ });
+        return;
+      } catch { /* ignore bad cache, fall through to API */ }
+    }
+
     const res = await fetch(`/api/expenses/${params.id}`);
     if (!res.ok) { toast.error('Run not found'); return; }
     const data = await res.json() as Run;

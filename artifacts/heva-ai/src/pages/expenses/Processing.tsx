@@ -69,6 +69,22 @@ export default function ExpenseProcessing() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    // Check for a cached result written by New.tsx when the server returned the
+    // full pipeline result inline (happens on Vercel where the pipeline runs
+    // synchronously and different Lambda instances can't share /tmp SQLite).
+    const cached = sessionStorage.getItem(`expense_run_${params.id}`);
+    if (cached) {
+      try {
+        const data = JSON.parse(cached) as Run;
+        setRun(data);
+        if (data.status === 'done') {
+          setTimeout(() => navigate(`/expenses/${params.id}/review`), 800);
+          return;
+        }
+        if (data.status === 'error') return;
+      } catch { /* ignore bad cache */ }
+    }
+
     const poll = async () => {
       try {
         const res = await fetch(`/api/expenses/${params.id}`);

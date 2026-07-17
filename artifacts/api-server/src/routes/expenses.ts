@@ -122,6 +122,17 @@ router.post(
       });
     }
 
+    // On Vercel the pipeline already ran synchronously above. Return the full
+    // result inline so the frontend never needs to poll a separate Lambda
+    // instance (each invocation has its own /tmp, so polling would 404).
+    if (process.env["VERCEL"]) {
+      const run = queries.getById.get(runId);
+      if (run) {
+        const edits = queries.getEditsForRun.all(runId);
+        return res.status(201).json({ ...parseRun(run), edits });
+      }
+    }
+
     res.status(201).json({ id: runId, status: "pending" });
   }
 );

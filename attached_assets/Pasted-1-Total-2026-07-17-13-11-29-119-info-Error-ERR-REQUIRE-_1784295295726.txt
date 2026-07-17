@@ -1,0 +1,53 @@
+1 Total
+2026-07-17 13:11:29.119 [info] Error [ERR_REQUIRE_ESM]: require() of ES Module /var/task/artifacts/api-server/dist/index.mjs from /var/task/api/index.js not supported.
+Instead change the require of /var/task/artifacts/api-server/dist/index.mjs to a dynamic import() which is available in all CommonJS modules.
+    at /opt/rust/nodejs.js:2:13533
+    at Module.Vn (/opt/rust/nodejs.js:2:13911)
+    at e.<computed>.st._load (/opt/rust/nodejs.js:2:13503)
+    at s (/opt/rust/bytecode.js:2:1110) {
+  code: 'ERR_REQUIRE_ESM'
+}
+Node.js process exited with exit status: 1. The logs above can help with debugging the issue.
+Error [ERR_REQUIRE_ESM]: require() of ES Module /var/task/artifacts/api-server/dist/index.mjs from /var/task/api/index.js not supported.
+Instead change the require of /var/task/artifacts/api-server/dist/index.mjs to a dynamic import() which is available in all CommonJS modules.
+    at /opt/rust/nodejs.js:2:13533
+    at Module.Vn (/opt/rust/nodejs.js:2:13911)
+    at e.<computed>.st._load (/opt/rust/nodejs.js:2:13503)
+    at s (/opt/rust/bytecode.js:2:1110) {
+  code: 'ERR_REQUIRE_ESM'
+}
+Node.js process exited with exit status: 1. The logs above can help with debugging the issue.
+
+Error [ERR_REQUIRE_ESM]: require() of ES Module /var/task/artifacts/api-server/dist/index.mjs from /var/task/api/index.js not supported.
+
+Instead change the require of /var/task/artifacts/api-server/dist/index.mjs to a dynamic import() which is available in all CommonJS modules.
+
+    at /opt/rust/nodejs.js:2:13533
+
+    at Module.Vn (/opt/rust/nodejs.js:2:13911)
+
+    at e.<computed>.st._load (/opt/rust/nodejs.js:2:13503)
+
+    at s (/opt/rust/bytecode.js:2:1110) 
+{
+code: "ERR_REQUIRE_ESM"
+}
+
+Node.js process exited with exit status: 1. The logs above can help with debugging the issue.
+
+Error [ERR_REQUIRE_ESM]: require() of ES Module /var/task/artifacts/api-server/dist/index.mjs from /var/task/api/index.js not supported.
+
+Instead change the require of /var/task/artifacts/api-server/dist/index.mjs to a dynamic import() which is available in all CommonJS modules.
+
+    at /opt/rust/nodejs.js:2:13533
+
+    at Module.Vn (/opt/rust/nodejs.js:2:13911)
+
+    at e.<computed>.st._load (/opt/rust/nodejs.js:2:13503)
+
+    at s (/opt/rust/bytecode.js:2:1110) 
+{
+code: "ERR_REQUIRE_ESM"
+}
+
+Node.js process exited with exit status: 1. The logs above can help with debugging the issue.
