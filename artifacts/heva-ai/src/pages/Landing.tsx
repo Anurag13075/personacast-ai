@@ -1,6 +1,6 @@
 import { useLocation } from 'wouter';
 import { ArrowRight, CheckCircle, Flag, FileJson, GitMerge, Mic, Receipt, ScanLine, Sparkles } from 'lucide-react';
-import heroBg from 'new-hero-image.jpg';
+
 import featurePipeline from 'feature-pipeline.jpg';
 
 export default function Landing() {
