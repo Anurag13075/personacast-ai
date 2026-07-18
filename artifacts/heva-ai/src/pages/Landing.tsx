@@ -1,7 +1,7 @@
 import { useLocation } from 'wouter';
 import { ArrowRight, CheckCircle, Flag, FileJson, GitMerge, Mic, Receipt, ScanLine, Sparkles } from 'lucide-react';
-import heroBg from './hero-bg.jpg';
-import featurePipeline from './feature-pipeline.jpg';
+import heroBg from 'hero-bg.jpg';
+import featurePipeline from 'feature-pipeline.jpg';
 
 export default function Landing() {
   const [, navigate] = useLocation();
