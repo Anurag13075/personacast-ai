@@ -1,10 +1,9 @@
 import { Router, type Response } from "express";
-import multer from "multer";
 import { randomUUID } from "crypto";
 import { queries } from "../lib/database.js";
 import {
   extractAudioIntent,
-  analyzeReceipt,
+  buildReceiptFromManual,
   reconcileExpense,
   type AudioResult,
   type ReceiptResult,
@@ -13,12 +12,6 @@ import {
 import { logger } from "../lib/logger.js";
 
 const router = Router();
-
-// Receipt image only — voice transcript comes as plain text from the browser
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
-});
 
 // ─── SSE helper ─────────────────────────────────────────────────────────────
 function sendEvent(res: Response, event: object) {
@@ -29,33 +22,41 @@ function sendEvent(res: Response, event: object) {
 }
 
 // ─── POST /api/expenses ──────────────────────────────────────────────────────
-// Accepts:
-//   receipt   — image file (multipart)
-//   transcript — spoken/typed expense description (form text field)
-//   policyNotes — optional policy rules (form text field)
+// Accepts (JSON or form body):
+//   transcript    — spoken/typed expense description (browser Web Speech API)
+//   receiptVendor — vendor name from the receipt
+//   receiptTotal  — total amount (number string)
+//   receiptDate   — date in YYYY-MM-DD format (optional)
+//   receiptCategory — expense category
+//   policyNotes   — optional policy rules
 //
 // Returns an SSE stream. Events:
 //   { type: "created",      id }
-//   { type: "step1_done",   audio_result }   ─┐ parallel — arrive in any order
-//   { type: "step2_done",   receipt_result } ─┘
+//   { type: "step1_done",   audio_result }
+//   { type: "step2_done",   receipt_result }
 //   { type: "step3_running" }
 //   { type: "done",         id, reconciled }
 //   { type: "error",        message }
 // ────────────────────────────────────────────────────────────────────────────
-router.post(
-  "/",
-  upload.single("receipt"),
-  async (req, res) => {
-    const receiptFile = req.file;
-    const transcript = typeof req.body?.transcript === "string" ? req.body.transcript.trim() : "";
-    const policyNotes = typeof req.body?.policyNotes === "string" ? req.body.policyNotes.trim() || undefined : undefined;
+router.post("/", async (req, res) => {
+    const b = req.body as Record<string, string>;
+    const transcript     = typeof b?.transcript      === "string" ? b.transcript.trim()      : "";
+    const receiptVendor  = typeof b?.receiptVendor   === "string" ? b.receiptVendor.trim()   : "";
+    const receiptTotal   = parseFloat(b?.receiptTotal ?? "0") || 0;
+    const receiptDate    = typeof b?.receiptDate     === "string" && b.receiptDate ? b.receiptDate : null;
+    const receiptCategory = typeof b?.receiptCategory === "string" ? b.receiptCategory : "Other";
+    const policyNotes    = typeof b?.policyNotes     === "string" ? b.policyNotes.trim() || undefined : undefined;
 
-    if (!receiptFile) {
-      res.status(400).json({ error: "'receipt' image is required" });
+    if (!transcript) {
+      res.status(400).json({ error: "'transcript' is required" });
       return;
     }
-    if (!transcript) {
-      res.status(400).json({ error: "'transcript' text is required" });
+    if (!receiptVendor) {
+      res.status(400).json({ error: "'receiptVendor' is required" });
+      return;
+    }
+    if (!receiptTotal) {
+      res.status(400).json({ error: "'receiptTotal' is required" });
       return;
     }
 
@@ -69,18 +70,25 @@ router.post(
     const runId = randomUUID();
     const now = new Date().toISOString();
 
-    // Store transcript in audio_filename column (re-used as a text label)
-    queries.createRun.run(runId, now, transcript.slice(0, 200), receiptFile.originalname, policyNotes ?? null);
+    queries.createRun.run(runId, now, transcript.slice(0, 200), receiptVendor, policyNotes ?? null);
     sendEvent(res, { type: "created", id: runId });
 
     try {
       queries.updateRunStatus.run("step1", runId);
-      logger.info({ runId }, "Pipeline: steps 1+2 — extracting intent & reading receipt in parallel");
+      logger.info({ runId }, "Pipeline: step 1 — extracting intent from transcript");
 
-      // Steps 1 & 2 run concurrently — each flushes its result the moment it's ready
+      // Step 2 is instant (manual data) — resolve immediately so reconciliation
+      // can start as soon as step 1 finishes.
+      const manualReceipt = buildReceiptFromManual({
+        vendor: receiptVendor,
+        total: receiptTotal,
+        date: receiptDate,
+        category: receiptCategory,
+      });
+
       const [audioResult, receiptResult] = await Promise.all([
 
-        // Step 1: parse the spoken/typed transcript into structured intent
+        // Step 1: parse the spoken/typed transcript into structured intent via Groq
         (async (): Promise<AudioResult> => {
           const result = await extractAudioIntent(transcript);
           queries.saveAudioOnly.run(JSON.stringify(result), runId);
@@ -89,13 +97,12 @@ router.post(
           return result;
         })(),
 
-        // Step 2: vision model reads the receipt image
+        // Step 2: manual receipt data — instant, no API call needed
         (async (): Promise<ReceiptResult> => {
-          const result = await analyzeReceipt(receiptFile.buffer, receiptFile.mimetype);
-          queries.saveReceiptOnly.run(JSON.stringify(result), runId);
-          sendEvent(res, { type: "step2_done", receipt_result: result });
-          logger.info({ runId }, "Pipeline: step 2 done");
-          return result;
+          queries.saveReceiptOnly.run(JSON.stringify(manualReceipt), runId);
+          sendEvent(res, { type: "step2_done", receipt_result: manualReceipt });
+          logger.info({ runId }, "Pipeline: step 2 done (manual entry)");
+          return manualReceipt;
         })(),
       ]);
 

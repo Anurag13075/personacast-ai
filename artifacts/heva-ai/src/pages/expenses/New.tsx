@@ -1,18 +1,32 @@
 import { useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { Upload, Mic, Image, ArrowRight, History, Loader2, Square, Sparkles } from 'lucide-react';
+import { Receipt, Mic, ArrowRight, History, Loader2, Square, Sparkles } from 'lucide-react';
 import { usePipelineStore } from '@/stores/pipelineStore';
+
+const CATEGORIES = [
+  'Food and Beverage',
+  'Travel',
+  'Accommodation',
+  'Office Supplies',
+  'Entertainment',
+  'Healthcare',
+  'Other',
+];
 
 export default function ExpenseNew() {
   const [, navigate] = useLocation();
-  const [receipt, setReceipt] = useState<File | null>(null);
+  // Receipt fields
+  const [vendor, setVendor] = useState('');
+  const [total, setTotal] = useState('');
+  const [date, setDate] = useState('');
+  const [category, setCategory] = useState('Other');
+  // Voice/transcript
   const [transcript, setTranscript] = useState('');
   const [interimText, setInterimText] = useState('');
   const [recording, setRecording] = useState(false);
   const [policyNotes, setPolicyNotes] = useState('');
   const [loading, setLoading] = useState(false);
-  const receiptRef = useRef<HTMLInputElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const finalRef = useRef('');
@@ -62,31 +76,29 @@ export default function ExpenseNew() {
     setInterimText('');
   };
 
-  const handleReceiptDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/') && !file.name.endsWith('.pdf')) {
-      toast.error('Please upload an image or PDF');
-      return;
-    }
-    setReceipt(file);
-  };
-
   const submit = async () => {
-    if (!receipt) { toast.error('Please upload a receipt photo'); return; }
+    if (!vendor.trim()) { toast.error('Please enter the vendor name'); return; }
+    if (!total || isNaN(parseFloat(total))) { toast.error('Please enter a valid total amount'); return; }
     if (!transcript.trim()) { toast.error('Please record a voice memo or type a description'); return; }
 
     setLoading(true);
     usePipelineStore.getState().reset();
 
     try {
-      const form = new FormData();
-      form.append('receipt', receipt);
-      form.append('transcript', transcript.trim());
-      if (policyNotes.trim()) form.append('policyNotes', policyNotes.trim());
+      const body: Record<string, string> = {
+        transcript: transcript.trim(),
+        receiptVendor: vendor.trim(),
+        receiptTotal: String(parseFloat(total)),
+        receiptCategory: category,
+      };
+      if (date) body.receiptDate = date;
+      if (policyNotes.trim()) body.policyNotes = policyNotes.trim();
 
-      const res = await fetch('/api/expenses', { method: 'POST', body: form });
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
 
       if (!res.ok || !res.body) {
         const text = await res.text();
@@ -133,7 +145,7 @@ export default function ExpenseNew() {
     }
   };
 
-  const canSubmit = !!receipt && transcript.trim().length > 0 && !loading;
+  const canSubmit = vendor.trim().length > 0 && !!total && !isNaN(parseFloat(total)) && transcript.trim().length > 0 && !loading;
 
   return (
     <div className="min-h-screen bg-white text-[#09090b]" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -159,50 +171,75 @@ export default function ExpenseNew() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight">Reconcile an expense</h1>
           <p className="mt-1.5 text-sm text-[#71717a]">
-            Upload a receipt and describe the expense by voice or text. The AI flags every mismatch.
+            Enter the receipt details and describe the expense by voice or text. The AI flags every mismatch.
           </p>
         </div>
 
-        {/* ── Receipt photo ── */}
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleReceiptDrop}
-          onClick={() => receiptRef.current?.click()}
-          className={`relative flex min-h-[140px] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-6 transition ${
-            receipt
-              ? 'border-[#09090b] bg-[#fafafa]'
-              : 'border-[#d4d4d8] bg-[#fafafa] hover:border-[#a1a1aa] hover:bg-[#f4f4f5]'
-          }`}
-        >
-          <input
-            ref={receiptRef}
-            type="file"
-            accept="image/*,.pdf"
-            className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) setReceipt(f); }}
-          />
-          {receipt ? (
-            <>
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#e4e4e7] bg-white text-[#09090b]">
-                <Upload className="h-5 w-5" />
+        {/* ── Receipt details ── */}
+        <div className="rounded-2xl border border-[#e4e4e7] bg-[#fafafa] p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#e4e4e7] bg-white">
+              <Receipt className="h-3.5 w-3.5 text-[#71717a]" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">Receipt Details</p>
+              <p className="text-[11px] text-[#a1a1aa]">Enter the key fields from your receipt</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {/* Vendor */}
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Vendor / Merchant <span className="text-red-400">*</span></label>
+              <input
+                type="text"
+                value={vendor}
+                onChange={(e) => setVendor(e.target.value)}
+                placeholder="e.g. The Coffee Collective"
+                className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
+              />
+            </div>
+
+            {/* Total + Date */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Total Amount <span className="text-red-400">*</span></label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a1a1aa]">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={total}
+                    onChange={(e) => setTotal(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full rounded-xl border border-[#e4e4e7] bg-white py-2.5 pl-7 pr-4 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
+                  />
+                </div>
               </div>
-              <div className="text-center">
-                <p className="max-w-xs truncate text-sm font-medium">{receipt.name}</p>
-                <p className="mt-0.5 text-[11px] text-[#a1a1aa]">{(receipt.size / 1024).toFixed(0)} KB · click to change</p>
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Date <span className="text-[#a1a1aa] font-normal">optional</span></label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
+                />
               </div>
-              <div className="absolute right-3 top-3 rounded-full bg-[#dcfce7] px-2 py-0.5 text-[10px] font-semibold text-[#16a34a]">✓</div>
-            </>
-          ) : (
-            <>
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#e4e4e7] bg-white text-[#52525b]">
-                <Image className="h-5 w-5" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium">Receipt Photo</p>
-                <p className="mt-0.5 text-[11px] text-[#a1a1aa]">drag & drop or click · JPG, PNG, PDF</p>
-              </div>
-            </>
-          )}
+            </div>
+
+            {/* Category */}
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
+              >
+                {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
         </div>
 
         {/* ── Voice memo ── */}
@@ -213,7 +250,7 @@ export default function ExpenseNew() {
                 <Mic className="h-3.5 w-3.5 text-[#71717a]" />
               </div>
               <div>
-                <p className="text-sm font-medium">Voice Memo</p>
+                <p className="text-sm font-medium">Voice Memo <span className="text-red-400 text-[11px] font-normal">required</span></p>
                 <p className="text-[11px] text-[#a1a1aa]">Describe the expense — amount, vendor, purpose, date</p>
               </div>
             </div>
@@ -306,7 +343,7 @@ export default function ExpenseNew() {
         <div className="mt-8 grid grid-cols-3 gap-3">
           {[
             { n: '1', label: 'Intent Extraction', desc: 'Parse spoken memo via browser' },
-            { n: '2', label: 'Receipt Reading', desc: 'Gemini vision reads every field' },
+            { n: '2', label: 'Receipt Data', desc: 'Manually entered receipt fields' },
             { n: '3', label: 'Reconciliation', desc: 'Cross-modal + policy check' },
           ].map((s) => (
             <div key={s.n} className="rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4">

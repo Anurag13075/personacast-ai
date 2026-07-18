@@ -19,9 +19,9 @@ type Run = {
 
 // ── Steps config ─────────────────────────────────────────────────────────────
 const STEPS = [
-  { key: 'step1', label: 'Audio Understanding', desc: 'Transcribing voice memo & extracting intent', icon: Volume2 },
-  { key: 'step2', label: 'Receipt Analysis', desc: 'OCR reading every field on the receipt', icon: Image },
-  { key: 'step3', label: 'Reconciliation', desc: 'Reasoning across both modalities for mismatches', icon: GitMerge },
+  { key: 'step1', label: 'Audio Understanding', desc: 'Extracting intent from voice memo or typed description', icon: Volume2 },
+  { key: 'step2', label: 'Receipt Data', desc: 'Structuring manually entered receipt details', icon: Image },
+  { key: 'step3', label: 'Reconciliation', desc: 'Cross-checking voice memo against receipt for mismatches', icon: GitMerge },
 ];
 
 // ── Step status ───────────────────────────────────────────────────────────────

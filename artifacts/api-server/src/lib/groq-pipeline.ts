@@ -115,79 +115,23 @@ Set confidence low (< 0.6) if the speaker is vague or contradicts themselves.`,
   };
 }
 
-// ─── Step 2: Receipt analysis via Groq Llama 4 Scout Vision ──────────────────
-// Sends the receipt image as a base64 data URL to Groq's vision model, which
-// reads and parses every field in a single API call.
-// Pure REST — no native binaries, no WASM, works on Vercel serverless.
+// ─── Step 2: Manual receipt entry ─────────────────────────────────────────────
+// The user enters receipt details directly in the form — no vision model needed.
+// This function simply structures the raw inputs into the shared ReceiptResult type.
 
-export async function analyzeReceipt(
-  imageBuffer: Buffer,
-  mimeType: string
-): Promise<ReceiptResult> {
-  const key = getKey();
-  const base64 = imageBuffer.toString("base64");
-  const dataUrl = `data:${mimeType};base64,${base64}`;
-
-  const res = await fetch(`${GROQ_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: { url: dataUrl },
-            },
-            {
-              type: "text",
-              text: `Analyze this receipt image and return structured data.
-Return ONLY valid JSON with this exact schema — no markdown fences, no extra text:
-{
-  "vendor": "store or restaurant name",
-  "line_items": [{"description": "item name", "amount": 0.00}],
-  "total": 0.00,
-  "date": "YYYY-MM-DD or null",
-  "category_guess": "one of: Food and Beverage, Travel, Accommodation, Office Supplies, Entertainment, Healthcare, Other",
-  "field_confidence": {
-    "vendor": 0.0,
-    "total": 0.0,
-    "date": 0.0,
-    "line_items": 0.0
-  }
-}
-Set confidence values low (< 0.7) for fields that are hard to read or ambiguous.
-Set confidence values high (> 0.9) only when the field is clearly legible.`,
-            },
-          ],
-        },
-      ],
-      temperature: 0.1,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Receipt analysis failed (${res.status}): ${err}`);
-  }
-
-  const data = (await res.json()) as { choices: { message: { content: string } }[] };
-  const raw = data.choices[0].message.content ?? "";
-  const clean = raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-  const parsed = JSON.parse(clean) as ReceiptResult;
-
+export function buildReceiptFromManual(opts: {
+  vendor: string;
+  total: number;
+  date: string | null;
+  category: string;
+}): ReceiptResult {
   return {
-    vendor: parsed.vendor ?? "Unknown",
-    line_items: parsed.line_items ?? [],
-    total: parsed.total ?? 0,
-    date: parsed.date ?? null,
-    category_guess: parsed.category_guess ?? "Other",
-    field_confidence: parsed.field_confidence ?? {},
+    vendor: opts.vendor || "Unknown",
+    line_items: [],
+    total: opts.total,
+    date: opts.date ?? null,
+    category_guess: opts.category || "Other",
+    field_confidence: { vendor: 1, total: 1, date: opts.date ? 1 : 0, line_items: 1 },
   };
 }
 
