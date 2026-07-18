@@ -1,5 +1,7 @@
 import { useLocation } from 'wouter';
 import { ArrowRight, CheckCircle, Flag, FileJson, GitMerge, Mic, Receipt, ScanLine, Sparkles } from 'lucide-react';
+import heroBg from '../../../../hero-bg.jpg';
+import featurePipeline from '../../../../feature-pipeline.jpg';
 
 export default function Landing() {
   const [, navigate] = useLocation();
@@ -9,12 +11,10 @@ export default function Landing() {
 
       {/* ── HERO ── */}
       <section className="relative min-h-screen overflow-hidden">
-        {/* Background image */}
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: "url('/hero-bg.jpg')" }}
+          style={{ backgroundImage: `url(${heroBg})` }}
         />
-        {/* Gradient overlay — dark at bottom, semi-transparent at top */}
         <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/30 to-black/75" />
 
         {/* ── FLOATING NAV ── */}
@@ -93,7 +93,6 @@ export default function Landing() {
           </div>
         </div>
 
-        {/* scroll fade */}
         <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-white to-transparent" />
       </section>
 
@@ -101,7 +100,6 @@ export default function Landing() {
       <section className="px-6 pb-28 -mt-4 relative z-10">
         <div className="mx-auto max-w-5xl">
           <div className="overflow-hidden rounded-3xl border border-[#e4e4e7] bg-white shadow-2xl shadow-black/8">
-            {/* Browser chrome */}
             <div className="flex items-center gap-2 border-b border-[#f0f0f0] bg-[#fafafa] px-5 py-3.5">
               <span className="h-3 w-3 rounded-full bg-[#ef4444]/70" />
               <span className="h-3 w-3 rounded-full bg-[#f59e0b]/70" />
@@ -111,9 +109,7 @@ export default function Landing() {
                 expensereconciler.app/review
               </div>
             </div>
-            {/* Mock review screen */}
             <div className="grid grid-cols-1 divide-y divide-[#f0f0f0] bg-white md:grid-cols-3 md:divide-x md:divide-y-0">
-              {/* Step 1 — Voice */}
               <div className="p-6">
                 <p className="mb-3 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#a1a1aa]">
                   <Mic className="h-3 w-3" /> Voice Memo
@@ -139,7 +135,6 @@ export default function Landing() {
                   </div>
                 </div>
               </div>
-              {/* Step 2 — Receipt */}
               <div className="p-6">
                 <p className="mb-3 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#a1a1aa]">
                   <Receipt className="h-3 w-3" /> Receipt
@@ -161,7 +156,6 @@ export default function Landing() {
                   <span className="font-medium">URBAN GRIND CAFE · 97% confidence</span>
                 </div>
               </div>
-              {/* Step 3 — Reconciled */}
               <div className="p-6">
                 <p className="mb-3 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-[#a1a1aa]">
                   <GitMerge className="h-3 w-3" /> Reconciled
@@ -259,14 +253,12 @@ export default function Landing() {
       <section className="px-6 py-28">
         <div className="mx-auto max-w-5xl">
           <div className="grid gap-16 lg:grid-cols-2 lg:gap-24 items-center">
-            {/* Left — image */}
             <div className="relative rounded-3xl overflow-hidden shadow-2xl shadow-black/10">
               <img
-                src="/feature-pipeline.jpg"
+                src={featurePipeline}
                 alt="Receipt, voice recorder, and reconciliation report"
                 className="w-full h-72 object-cover lg:h-96"
               />
-              {/* Floating badge */}
               <div className="absolute bottom-5 left-5 right-5 rounded-2xl bg-white/90 backdrop-blur-md px-5 py-4 border border-white/60 shadow-lg">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-[#09090b]">Reconciliation complete</span>
@@ -280,7 +272,6 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Right — features */}
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-[#a1a1aa] mb-4">Why it's different</p>
               <h2
@@ -393,7 +384,7 @@ export default function Landing() {
       <section className="relative overflow-hidden px-6 py-32">
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: "url('/hero-bg.jpg')" }}
+          style={{ backgroundImage: `url(${heroBg})` }}
         />
         <div className="absolute inset-0 bg-black/65" />
         <div className="relative z-10 mx-auto max-w-2xl text-center">
