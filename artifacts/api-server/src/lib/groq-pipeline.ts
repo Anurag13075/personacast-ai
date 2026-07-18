@@ -115,14 +115,43 @@ Set confidence low (< 0.6) if the speaker is vague or contradicts themselves.`,
   };
 }
 
-// ─── Step 2: Receipt vision analysis ──────────────────────────────────────────
+// ─── Step 2: Receipt OCR + LLM analysis ───────────────────────────────────────
+// Uses Tesseract OCR to extract text from the receipt image, then sends the
+// raw text to the LLM for structured parsing. This avoids needing a vision
+// model and works with any Groq text model.
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { writeFile, unlink } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+
+const execFileAsync = promisify(execFile);
+
+async function ocrReceipt(imageBuffer: Buffer, mimeType: string): Promise<string> {
+  const ext = mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : "jpg";
+  const tmpPath = join(tmpdir(), `receipt-${Date.now()}.${ext}`);
+  await writeFile(tmpPath, imageBuffer);
+  try {
+    const { stdout } = await execFileAsync("tesseract", [tmpPath, "stdout"], {
+      timeout: 30_000,
+    });
+    return stdout.trim();
+  } finally {
+    await unlink(tmpPath).catch(() => {});
+  }
+}
+
 export async function analyzeReceipt(
   imageBuffer: Buffer,
   mimeType: string
 ): Promise<ReceiptResult> {
   const key = getKey();
-  const base64 = imageBuffer.toString("base64");
 
+  // Step 2a: OCR the image
+  const ocrText = await ocrReceipt(imageBuffer, mimeType);
+  if (!ocrText) throw new Error("Tesseract returned empty text — image may be unreadable");
+
+  // Step 2b: LLM parses the raw OCR text into structured data
   const res = await fetch(`${GROQ_API_BASE}/chat/completions`, {
     method: "POST",
     headers: {
@@ -130,14 +159,11 @@ export async function analyzeReceipt(
       Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      model: "llama-3.3-70b-versatile",
       messages: [
         {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `You are analyzing a receipt image. Extract all visible information precisely.
+          role: "system",
+          content: `You are parsing raw OCR text extracted from a receipt image. The OCR may contain noise, mis-spellings, or garbled characters — interpret charitably.
 Return ONLY valid JSON with this exact schema — no markdown fences, no extra text:
 {
   "vendor": string,
@@ -153,15 +179,13 @@ Return ONLY valid JSON with this exact schema — no markdown fences, no extra t
   }
 }
 Field confidence rules:
-- Set below 0.7 for any field that is blurry, cut off, or hard to read
-- Set below 0.5 if you are guessing or the field is absent
-- Only set above 0.9 if you can read it with near-certainty`,
-            },
-            {
-              type: "image_url",
-              image_url: { url: `data:${mimeType};base64,${base64}` },
-            },
-          ],
+- Set below 0.7 for any field with heavy OCR noise or ambiguity
+- Set below 0.5 if the field is absent or clearly garbled
+- Only set above 0.9 if the field is cleanly readable`,
+        },
+        {
+          role: "user",
+          content: `Raw OCR text from receipt:\n\n${ocrText}\n\nParse into the structured receipt JSON.`,
         },
       ],
       response_format: { type: "json_object" },

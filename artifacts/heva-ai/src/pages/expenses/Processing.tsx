@@ -49,15 +49,33 @@ const STEPS = [
   { key: 'step3', label: 'Reconciliation', desc: 'Reasoning across both modalities for mismatches', icon: GitMerge },
 ];
 
-const STATUS_ORDER = ['pending', 'step1', 'step2', 'step3', 'done', 'error'];
-
-function stepStatus(currentStatus: string, stepIndex: number): 'done' | 'running' | 'pending' | 'error' {
-  if (currentStatus === 'error') return stepIndex === 0 ? 'error' : 'pending';
-  const cur = STATUS_ORDER.indexOf(currentStatus);
-  const stepStart = stepIndex + 1; // step1 = index 1, step2 = index 2, step3 = index 3
-  if (cur > stepStart + 1) return 'done';
-  if (cur === stepStart) return 'running';
-  if (cur > stepStart) return 'done';
+// Steps 1 & 2 run in parallel on the backend.
+// Status flow: pending → step1 (both running) → step3 (reconciling) → done | error
+// We detect individual step completion by checking whether result data has arrived,
+// not by the status string alone — so each card lights up as soon as its data lands.
+function stepStatus(run: Run | null, stepIndex: number): 'done' | 'running' | 'pending' | 'error' {
+  if (!run) return 'pending';
+  const s = run.status;
+  if (s === 'error') {
+    // Show error on whichever step was last active
+    if (stepIndex === 2 && run.audio_result && run.receipt_result) return 'error';
+    if (stepIndex === 1 && run.audio_result && !run.receipt_result) return 'error';
+    if (stepIndex === 0) return 'error';
+    return 'pending';
+  }
+  if (stepIndex === 0) {
+    if (run.audio_result) return 'done';
+    if (s !== 'pending') return 'running';
+    return 'pending';
+  }
+  if (stepIndex === 1) {
+    if (run.receipt_result) return 'done';
+    if (s === 'step1' || s === 'step3' || s === 'done') return 'running';
+    return 'pending';
+  }
+  // stepIndex === 2: reconciliation
+  if (s === 'done') return 'done';
+  if (s === 'step3') return 'running';
   return 'pending';
 }
 
@@ -158,7 +176,7 @@ export default function ExpenseProcessing() {
         {/* Step cards */}
         <div className="space-y-4">
           {STEPS.map((step, i) => {
-            const status = run ? stepStatus(run.status, i) : 'pending';
+            const status = stepStatus(run, i);
             const Icon = step.icon;
             return (
               <div

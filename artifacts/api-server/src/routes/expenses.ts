@@ -32,23 +32,32 @@ async function runPipeline(
   policyNotes?: string
 ) {
   try {
-    // Step 1 — Audio understanding
+    // Steps 1 & 2 run in parallel — audio transcription and receipt vision are independent
     queries.updateRunStatus.run("step1", runId);
-    logger.info({ runId }, "Pipeline: step 1 — transcribing audio");
+    logger.info({ runId }, "Pipeline: steps 1+2 — transcribing audio & analyzing receipt in parallel");
 
-    const transcript = await transcribeAudio(audioBuffer, audioFilename, audioMimeType);
-    const audioResult = await extractAudioIntent(transcript);
-    queries.updateAudioResult.run(JSON.stringify(audioResult), runId);
-
-    logger.info({ runId }, "Pipeline: step 2 — analyzing receipt");
-
-    // Step 2 — Receipt understanding
-    const receiptResult = await analyzeReceipt(imageBuffer, imageMimeType);
-    queries.updateReceiptResult.run(JSON.stringify(receiptResult), runId);
-
-    logger.info({ runId }, "Pipeline: step 3 — reconciling");
+    const [audioResult, receiptResult] = await Promise.all([
+      (async () => {
+        const transcript = await transcribeAudio(audioBuffer, audioFilename, audioMimeType);
+        const result = await extractAudioIntent(transcript);
+        // Save audio result immediately so the UI can show it without waiting for receipt
+        queries.saveAudioOnly.run(JSON.stringify(result), runId);
+        logger.info({ runId }, "Pipeline: step 1 done — audio result saved");
+        return result;
+      })(),
+      (async () => {
+        const result = await analyzeReceipt(imageBuffer, imageMimeType);
+        // Save receipt result immediately so the UI can show it without waiting for audio
+        queries.saveReceiptOnly.run(JSON.stringify(result), runId);
+        logger.info({ runId }, "Pipeline: step 2 done — receipt result saved");
+        return result;
+      })(),
+    ]);
 
     // Step 3 — Cross-modal reconciliation (+ optional policy notes)
+    queries.updateRunStatus.run("step3", runId);
+    logger.info({ runId }, "Pipeline: step 3 — reconciling");
+
     const reconciled = await reconcileExpense(audioResult, receiptResult, policyNotes);
     queries.updateReconciled.run(
       JSON.stringify(reconciled),
