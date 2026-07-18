@@ -6,10 +6,7 @@
   "functions": {
     "api/index.mjs": {
       "maxDuration": 60,
-      "includeFiles": [
-        "node_modules/.pnpm/tesseract.js-core@*/node_modules/tesseract.js-core/*.wasm",
-        "node_modules/.pnpm/tesseract.js@*/node_modules/tesseract.js/src/worker-script/node/**"
-      ]
+      "includeFiles": "node_modules/.pnpm/tesseract.js{,-core}@*/node_modules/tesseract.js{,-core}/**"
     }
   },
   "rewrites": [
