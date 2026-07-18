@@ -114,3 +114,6 @@ The `demo/` folder contains:
 - `demo/receipt.png` — The Coffee Collective receipt: $37.99, July 15th
 
 These inputs are designed to produce two medium-severity flags (amount mismatch 8.5%, date off by one day) — a realistic scenario that demonstrates the reconciliation working correctly.
+
+Author 
+Anurag
