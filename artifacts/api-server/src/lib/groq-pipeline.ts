@@ -73,7 +73,9 @@ export async function extractAudioIntent(transcript: string): Promise<AudioResul
       Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
+      // llama-3.3-70b-versatile was deprecated by Groq on 2026-06-17;
+      // migrated to their recommended replacement.
+      model: "openai/gpt-oss-120b",
       messages: [
         {
           role: "system",
@@ -115,23 +117,68 @@ Set confidence low (< 0.6) if the speaker is vague or contradicts themselves.`,
   };
 }
 
-// ─── Step 2: Manual receipt entry ─────────────────────────────────────────────
-// The user enters receipt details directly in the form — no vision model needed.
-// This function simply structures the raw inputs into the shared ReceiptResult type.
+// ─── Step 2: Receipt vision extraction ────────────────────────────────────────
+// Groq's qwen/qwen3.6-27b accepts image + text input and JSON mode. The receipt
+// image is genuinely processed by the model here — this is the real second
+// modality, not a display-only reference.
 
-export function buildReceiptFromManual(opts: {
-  vendor: string;
-  total: number;
-  date: string | null;
-  category: string;
-}): ReceiptResult {
+export async function extractReceiptData(
+  imageBuffer: Buffer,
+  mimeType: string
+): Promise<ReceiptResult> {
+  const key = getKey();
+  const base64 = imageBuffer.toString("base64");
+
+  const res = await fetch(`${GROQ_API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: "qwen/qwen3.6-27b",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+            {
+              type: "text",
+              text: `Extract structured data from this receipt image.
+Return ONLY valid JSON — no markdown fences, no extra text:
+{
+  "vendor": string,
+  "line_items": [{"description": string, "amount": number}],
+  "total": number,
+  "date": "YYYY-MM-DD" or null,
+  "category_guess": string,
+  "field_confidence": {"vendor": 0.0-1.0, "total": 0.0-1.0, "date": 0.0-1.0, "line_items": 0.0-1.0}
+}
+Set confidence below 0.7 for any field that is blurry, cropped, ambiguous, or handwritten.
+Never guess a value you cannot actually read — if illegible, use null and confidence 0.`,
+            },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.1,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Receipt vision extraction failed (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as { choices: { message: { content: string } }[] };
+  const parsed = JSON.parse(data.choices[0].message.content);
   return {
-    vendor: opts.vendor || "Unknown",
-    line_items: [],
-    total: opts.total,
-    date: opts.date ?? null,
-    category_guess: opts.category || "Other",
-    field_confidence: { vendor: 1, total: 1, date: opts.date ? 1 : 0, line_items: 1 },
+    vendor: parsed.vendor ?? "Unknown",
+    line_items: Array.isArray(parsed.line_items) ? parsed.line_items : [],
+    total: typeof parsed.total === "number" ? parsed.total : 0,
+    date: parsed.date ?? null,
+    category_guess: parsed.category_guess ?? "Other",
+    field_confidence: parsed.field_confidence ?? { vendor: 0.5, total: 0.5, date: 0.5, line_items: 0.5 },
   };
 }
 
@@ -154,7 +201,9 @@ export async function reconcileExpense(
       Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
+      // llama-3.3-70b-versatile was deprecated by Groq on 2026-06-17;
+      // migrated to their recommended replacement.
+      model: "openai/gpt-oss-120b",
       messages: [
         {
           role: "system",
