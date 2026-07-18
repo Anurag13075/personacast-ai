@@ -115,29 +115,38 @@ Set confidence low (< 0.6) if the speaker is vague or contradicts themselves.`,
   };
 }
 
-// ─── Step 2: Receipt analysis via Google Gemini Flash vision ──────────────────
-// Sends the receipt image as base64 directly to Gemini Flash, which handles
-// both reading and structured parsing in a single API call.
+// ─── Step 2: Receipt analysis via Groq Llama 4 Scout Vision ──────────────────
+// Sends the receipt image as a base64 data URL to Groq's vision model, which
+// reads and parses every field in a single API call.
 // Pure REST — no native binaries, no WASM, works on Vercel serverless.
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-// gemini-2.0-flash-lite is the high-volume free-tier model; falls back to
-// the generic alias if the specific version is unavailable on this key.
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
-
-function getGeminiKey(): string {
-  const key = process.env["GOOGLE_AI_API_KEY"];
-  if (!key) throw new Error("GOOGLE_AI_API_KEY not set — add it to your environment variables");
-  return key;
-}
 
 export async function analyzeReceipt(
   imageBuffer: Buffer,
   mimeType: string
 ): Promise<ReceiptResult> {
-  const key = getGeminiKey();
+  const key = getKey();
   const base64 = imageBuffer.toString("base64");
+  const dataUrl = `data:${mimeType};base64,${base64}`;
 
-  const prompt = `Analyze this receipt image and return structured data.
+  const res = await fetch(`${GROQ_API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: { url: dataUrl },
+            },
+            {
+              type: "text",
+              text: `Analyze this receipt image and return structured data.
 Return ONLY valid JSON with this exact schema — no markdown fences, no extra text:
 {
   "vendor": "store or restaurant name",
@@ -153,37 +162,22 @@ Return ONLY valid JSON with this exact schema — no markdown fences, no extra t
   }
 }
 Set confidence values low (< 0.7) for fields that are hard to read or ambiguous.
-Set confidence values high (> 0.9) only when the field is clearly legible.`;
-
-  const res = await fetch(
-    `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { inline_data: { mime_type: mimeType, data: base64 } },
-              { text: prompt },
-            ],
-          },
-        ],
-        generationConfig: { temperature: 0.1 },
-      }),
-    }
-  );
+Set confidence values high (> 0.9) only when the field is clearly legible.`,
+            },
+          ],
+        },
+      ],
+      temperature: 0.1,
+    }),
+  });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini receipt analysis failed (${res.status}): ${err}`);
+    throw new Error(`Receipt analysis failed (${res.status}): ${err}`);
   }
 
-  const data = (await res.json()) as {
-    candidates: { content: { parts: { text: string }[] } }[];
-  };
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  // Strip markdown fences if Gemini wraps the JSON despite the prompt
+  const data = (await res.json()) as { choices: { message: { content: string } }[] };
+  const raw = data.choices[0].message.content ?? "";
   const clean = raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
   const parsed = JSON.parse(clean) as ReceiptResult;
 
