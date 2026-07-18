@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { Upload, Mic, FileAudio, Image, ArrowRight, History, Loader2, Clock, Sparkles } from 'lucide-react';
+import { usePipelineStore } from '@/stores/pipelineStore';
 
 export default function ExpenseNew() {
   const [, navigate] = useLocation();
@@ -33,24 +34,66 @@ export default function ExpenseNew() {
       return;
     }
     setLoading(true);
+
+    // Reset the store so Processing.tsx starts fresh
+    usePipelineStore.getState().reset();
+
     try {
       const form = new FormData();
       form.append('receipt', receipt);
       form.append('audio', audio);
       if (policyNotes.trim()) form.append('policyNotes', policyNotes.trim());
+
       const res = await fetch('/api/expenses', { method: 'POST', body: form });
-      if (!res.ok) {
-        const err = await res.json() as { error?: string };
-        throw new Error(err.error ?? 'Upload failed');
+
+      // The server now returns an SSE stream, not JSON.
+      // Check for error status before streaming (only fires for 400/500 before headers).
+      if (!res.ok || !res.body) {
+        const text = await res.text();
+        let msg = 'Upload failed';
+        try { msg = (JSON.parse(text) as { error?: string }).error ?? msg; } catch { /* */ }
+        throw new Error(msg);
       }
-      const data = await res.json() as { id: string; status?: string; reconciled?: unknown };
-      // On Vercel the pipeline runs synchronously and the full result is returned
-      // inline. Cache it in sessionStorage so the Processing/Review pages can
-      // use it without polling a different Lambda instance (which has an empty DB).
-      if (data.status === 'done' || data.reconciled != null) {
-        sessionStorage.setItem(`expense_run_${data.id}`, JSON.stringify(data));
-      }
-      navigate(`/expenses/${data.id}`);
+
+      // Start reading the SSE stream. As soon as we receive the 'created' event
+      // (which arrives immediately after the server creates the DB record) we
+      // navigate to the Processing page. The stream continues reading in the
+      // background and pushes events into the Zustand store, which Processing.tsx
+      // subscribes to — so the user sees each step card update in real time.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let navigated = false;
+
+      const readStream = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            // SSE messages are separated by double newlines
+            const chunks = buffer.split('\n\n');
+            buffer = chunks.pop()!; // keep any incomplete trailing chunk
+            for (const chunk of chunks) {
+              for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const event = JSON.parse(line.slice(6));
+                  usePipelineStore.getState().pushEvent(event);
+                  if (event.type === 'created' && !navigated) {
+                    navigated = true;
+                    navigate(`/expenses/${event.id as string}`);
+                  }
+                } catch { /* ignore malformed event */ }
+              }
+            }
+          }
+        } catch { /* stream closed or aborted */ }
+      };
+
+      // Fire-and-forget — don't await so the UI remains responsive
+      void readStream();
+
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Upload failed');
       setLoading(false);
@@ -112,7 +155,7 @@ export default function ExpenseNew() {
           />
         </div>
 
-        {/* Policy notes / text input */}
+        {/* Policy notes */}
         <div className="mt-5 rounded-2xl border border-[#e4e4e7] bg-[#fafafa] p-5">
           <div className="mb-3 flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#e4e4e7] bg-white">
@@ -141,7 +184,7 @@ export default function ExpenseNew() {
         {/* Estimated time */}
         <div className="mt-5 flex items-center justify-center gap-2 text-xs text-[#a1a1aa]">
           <Clock className="h-3.5 w-3.5" />
-          Estimated processing time: ~15–25 seconds
+          Results appear step-by-step as the AI completes each stage
         </div>
 
         {/* Submit */}
@@ -151,17 +194,17 @@ export default function ExpenseNew() {
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#09090b] py-3.5 text-sm font-semibold text-white shadow-lg shadow-black/10 transition hover:bg-[#27272a] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loading ? (
-            <><Loader2 className="h-4 w-4 animate-spin" /> Starting analysis…</>
+            <><Loader2 className="h-4 w-4 animate-spin" /> Connecting to pipeline…</>
           ) : (
             <><ArrowRight className="h-4 w-4" /> Analyze Expense</>
           )}
         </button>
 
-        {/* Pipeline steps */}
+        {/* Pipeline steps preview */}
         <div className="mt-10 grid grid-cols-3 gap-3">
           {[
             { n: '1', label: 'Audio Understanding', desc: 'Whisper + LLM intent' },
-            { n: '2', label: 'Receipt Analysis', desc: 'Vision model per-field' },
+            { n: '2', label: 'Receipt Analysis', desc: 'Tesseract OCR + LLM' },
             { n: '3', label: 'Reconciliation', desc: 'Cross-modal + policy' },
           ].map((s) => (
             <div key={s.n} className="rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4">
@@ -185,7 +228,7 @@ function DropZone({
   hint: string;
   icon: React.ReactNode;
   file: File | null;
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
   inputAccept: string;
   onChange: (f: File) => void;
   onDrop: (e: React.DragEvent) => void;

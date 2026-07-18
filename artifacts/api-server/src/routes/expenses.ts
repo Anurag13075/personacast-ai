@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import multer from "multer";
 import { randomUUID } from "crypto";
 import { queries } from "../lib/database.js";
@@ -21,59 +21,30 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
-// ─── Background pipeline ────────────────────────────────────────────────────
-async function runPipeline(
-  runId: string,
-  audioBuffer: Buffer,
-  audioFilename: string,
-  audioMimeType: string,
-  imageBuffer: Buffer,
-  imageMimeType: string,
-  policyNotes?: string
-) {
-  try {
-    // Steps 1 & 2 run in parallel — audio transcription and receipt vision are independent
-    queries.updateRunStatus.run("step1", runId);
-    logger.info({ runId }, "Pipeline: steps 1+2 — transcribing audio & analyzing receipt in parallel");
-
-    const [audioResult, receiptResult] = await Promise.all([
-      (async () => {
-        const transcript = await transcribeAudio(audioBuffer, audioFilename, audioMimeType);
-        const result = await extractAudioIntent(transcript);
-        // Save audio result immediately so the UI can show it without waiting for receipt
-        queries.saveAudioOnly.run(JSON.stringify(result), runId);
-        logger.info({ runId }, "Pipeline: step 1 done — audio result saved");
-        return result;
-      })(),
-      (async () => {
-        const result = await analyzeReceipt(imageBuffer, imageMimeType);
-        // Save receipt result immediately so the UI can show it without waiting for audio
-        queries.saveReceiptOnly.run(JSON.stringify(result), runId);
-        logger.info({ runId }, "Pipeline: step 2 done — receipt result saved");
-        return result;
-      })(),
-    ]);
-
-    // Step 3 — Cross-modal reconciliation (+ optional policy notes)
-    queries.updateRunStatus.run("step3", runId);
-    logger.info({ runId }, "Pipeline: step 3 — reconciling");
-
-    const reconciled = await reconcileExpense(audioResult, receiptResult, policyNotes);
-    queries.updateReconciled.run(
-      JSON.stringify(reconciled),
-      reconciled.overall_confidence,
-      runId
-    );
-
-    logger.info({ runId }, "Pipeline: done");
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error({ runId, err: msg }, "Pipeline error");
-    queries.setError.run(msg, runId);
+// ─── SSE helper ─────────────────────────────────────────────────────────────
+function sendEvent(res: Response, event: object) {
+  res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // Flush for nginx / Vercel edge proxies that buffer responses
+  if (typeof (res as unknown as { flush?: () => void }).flush === "function") {
+    (res as unknown as { flush: () => void }).flush();
   }
 }
 
-// ─── POST /api/expenses — create run ─────────────────────────────────────────
+// ─── POST /api/expenses — create run & stream SSE pipeline ──────────────────
+//
+// Instead of returning JSON and having the frontend poll, we open an
+// SSE stream on the POST response itself. Events arrive as each step
+// completes, giving the user real-time progress on both Vercel and Express.
+//
+// Event sequence:
+//   { type: "created",      id }
+//   { type: "step1_done",   audio_result }       ─┐ arrive in whichever
+//   { type: "step2_done",   receipt_result }      ─┘ order finishes first
+//   { type: "step3_running" }
+//   { type: "done",         id, reconciled }
+//   — or —
+//   { type: "error",        message }
+// ────────────────────────────────────────────────────────────────────────────
 router.post(
   "/",
   upload.fields([
@@ -90,9 +61,20 @@ router.post(
       return;
     }
 
+    // Open the SSE stream immediately — the client starts reading before we
+    // touch the AI APIs, so it sees each event the moment it is emitted.
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
+    res.flushHeaders();
+
     const runId = randomUUID();
     const now = new Date().toISOString();
-    const policyNotes = typeof req.body?.policyNotes === "string" ? req.body.policyNotes.trim() : undefined;
+    const policyNotes =
+      typeof req.body?.policyNotes === "string"
+        ? req.body.policyNotes.trim() || undefined
+        : undefined;
 
     queries.createRun.run(
       runId,
@@ -102,47 +84,59 @@ router.post(
       policyNotes ?? null
     );
 
-    if (process.env["VERCEL"]) {
-      // Vercel serverless: run the pipeline synchronously before responding.
-      // setImmediate callbacks are killed when the function returns, so we must
-      // await the full pipeline here. maxDuration: 60 in vercel.json gives us room.
-      await runPipeline(
-        runId,
-        audioFile.buffer,
-        audioFile.originalname,
-        audioFile.mimetype,
-        receiptFile.buffer,
-        receiptFile.mimetype,
-        policyNotes
+    // Let the client know the run ID so it can navigate immediately
+    sendEvent(res, { type: "created", id: runId });
+
+    try {
+      queries.updateRunStatus.run("step1", runId);
+      logger.info({ runId }, "Pipeline: steps 1+2 — transcribing audio & analyzing receipt in parallel");
+
+      // Steps 1 & 2 run in parallel — each pushes its result to the stream
+      // as soon as it finishes, so the frontend card lights up immediately.
+      const [audioResult, receiptResult] = await Promise.all([
+        (async (): Promise<AudioResult> => {
+          const transcript = await transcribeAudio(
+            audioFile.buffer,
+            audioFile.originalname,
+            audioFile.mimetype
+          );
+          const result = await extractAudioIntent(transcript);
+          queries.saveAudioOnly.run(JSON.stringify(result), runId);
+          sendEvent(res, { type: "step1_done", audio_result: result });
+          logger.info({ runId }, "Pipeline: step 1 done");
+          return result;
+        })(),
+        (async (): Promise<ReceiptResult> => {
+          const result = await analyzeReceipt(receiptFile.buffer, receiptFile.mimetype);
+          queries.saveReceiptOnly.run(JSON.stringify(result), runId);
+          sendEvent(res, { type: "step2_done", receipt_result: result });
+          logger.info({ runId }, "Pipeline: step 2 done");
+          return result;
+        })(),
+      ]);
+
+      // Step 3 — cross-modal reconciliation
+      queries.updateRunStatus.run("step3", runId);
+      sendEvent(res, { type: "step3_running" });
+      logger.info({ runId }, "Pipeline: step 3 — reconciling");
+
+      const reconciled = await reconcileExpense(audioResult, receiptResult, policyNotes);
+      queries.updateReconciled.run(
+        JSON.stringify(reconciled),
+        reconciled.overall_confidence,
+        runId
       );
-    } else {
-      // Local Express server: fire-and-forget so the request returns immediately
-      // and the client can poll /api/expenses/:id for step-by-step progress.
-      setImmediate(() => {
-        void runPipeline(
-          runId,
-          audioFile.buffer,
-          audioFile.originalname,
-          audioFile.mimetype,
-          receiptFile.buffer,
-          receiptFile.mimetype,
-          policyNotes
-        );
-      });
+
+      sendEvent(res, { type: "done", id: runId, reconciled });
+      logger.info({ runId }, "Pipeline: done");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ runId, err: msg }, "Pipeline error");
+      queries.setError.run(msg, runId);
+      sendEvent(res, { type: "error", message: msg });
     }
 
-    // On Vercel the pipeline already ran synchronously above. Return the full
-    // result inline so the frontend never needs to poll a separate Lambda
-    // instance (each invocation has its own /tmp, so polling would 404).
-    if (process.env["VERCEL"]) {
-      const run = queries.getById.get(runId);
-      if (run) {
-        const edits = queries.getEditsForRun.all(runId);
-        return res.status(201).json({ ...parseRun(run), edits });
-      }
-    }
-
-    res.status(201).json({ id: runId, status: "pending" });
+    res.end();
   }
 );
 
@@ -252,7 +246,7 @@ router.get("/:id/export/markdown", (req, res) => {
   const rc = parsed.receipt_result as ReceiptResult | null;
   const edits = queries.getEditsForRun.all(req.params.id);
 
-  const severityEmoji = { high: "🔴", medium: "🟡", low: "🟢" };
+  const severityEmoji: Record<string, string> = { high: "🔴", medium: "🟡", low: "🟢" };
 
   const lines: string[] = [
     `# Expense Report`,
@@ -331,14 +325,12 @@ router.get("/:id/export/markdown", (req, res) => {
     lines.push(``);
   }
 
-  const markdown = lines.join("\n");
-
   res.setHeader("Content-Type", "text/markdown; charset=utf-8");
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="expense-${run.id.slice(0, 8)}.md"`
   );
-  res.send(markdown);
+  res.send(lines.join("\n"));
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

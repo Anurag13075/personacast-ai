@@ -1,0 +1,26 @@
+No more logs to show within selected timeline
+
+Logs
+7 Total
+1 Error
+1 Fatal
+2026-07-18 03:32:22.910 [info] {"level":30,"time":1784345542909,"pid":4,"hostname":"169.254.82.179","runId":"66bf4742-b600-46d7-846d-71abf95ee885","msg":"Pipeline: steps 1+2 — transcribing audio & analyzing receipt in parallel"}
+2026-07-18 03:32:23.164 [info] failed to asynchronously prepare wasm: Error: ENOENT: no such file or directory, open '/var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.wasm'
+2026-07-18 03:32:23.164 [info] Aborted(Error: ENOENT: no such file or directory, open '/var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.wasm')
+2026-07-18 03:32:23.166 [info] Uncaught Exception: RuntimeError: Aborted(Error: ENOENT: no such file or directory, open '/var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.wasm'). Build with -sASSERTIONS for more info.
+    at r (/var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.js:4:305)
+    at za (/var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.js:5:351)
+    at async /var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.js:116:356
+    at async /var/task/node_modules/.pnpm/tesseract.js-core@7.0.0/node_modules/tesseract.js-core/tesseract-core-relaxedsimd.js:85:4
+2026-07-18 03:32:26.188 [info] {"level":30,"time":1784345546187,"pid":4,"hostname":"169.254.82.179","runId":"66bf4742-b600-46d7-846d-71abf95ee885","msg":"Pipeline: step 1 done — audio result saved"}
+2026-07-18 03:33:22.881 [error] Vercel Runtime Timeout Error: Task timed out after 60 seconds
+2026-07-18 03:33:22.881 [fatal] Node.js process exited with exit status: 129. The logs above can help with debugging the issue.
+
+{
+level: 30,
+time: 1784345542909,
+pid: 4,
+hostname: "169.254.82.179",
+runId: "66bf4742-b600-46d7-846d-71abf95ee885",
+msg: "Pipeline: steps 1+2 — transcribing audio & analyzing receipt in parallel"
+}

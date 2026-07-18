@@ -1,3 +1,3 @@
 - [OCR approach](ocr-approach.md) — uses tesseract.js (pure JS/WASM), externalized in esbuild, replaces vision model (unavailable on this Groq tier)
 - [Groq model availability](groq-models.md) — this account has no vision models; available text models are llama-3.1-8b-instant, llama-3.3-70b-versatile, openai/gpt-oss-120b (text only)
-- [Parallel pipeline](parallel-pipeline.md) — steps 1+2 run concurrently via Promise.all; status is `step1` while both run, `step3` when reconciling
+- [SSE streaming pipeline](sse-pipeline.md) — POST /api/expenses returns SSE stream; frontend reads events in New.tsx, pushes to Zustand pipelineStore; Processing.tsx subscribes to store for live updates; falls back to polling on page refresh

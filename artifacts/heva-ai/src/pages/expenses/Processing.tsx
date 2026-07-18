@@ -1,36 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'wouter';
 import { CheckCircle2, Circle, Loader2, AlertCircle, ArrowRight, Volume2, Image, GitMerge } from 'lucide-react';
+import { usePipelineStore } from '@/stores/pipelineStore';
+import type { AudioResult, ReceiptResult, ReconciledExpense } from '@/stores/pipelineStore';
 
-type AudioResult = {
-  transcript: string;
-  claimed_purpose: string | null;
-  claimed_amount: number | null;
-  claimed_counterparty: string | null;
-  claimed_date: string | null;
-  confidence: number;
-};
-
-type ReceiptResult = {
-  vendor: string;
-  line_items: { description: string; amount: number }[];
-  total: number;
-  date: string | null;
-  category_guess: string;
-  field_confidence: Record<string, number>;
-};
-
-type ReconciledExpense = {
-  category: string;
-  amount: number;
-  vendor: string;
-  date: string;
-  business_justification: string;
-  flags: { field: string; reason: string; severity: string }[];
-  overall_confidence: number;
-  reasoning?: string;
-};
-
+// ── Types ────────────────────────────────────────────────────────────────────
 type Run = {
   id: string;
   status: string;
@@ -43,21 +17,21 @@ type Run = {
   error_message: string | null;
 };
 
+// ── Steps config ─────────────────────────────────────────────────────────────
 const STEPS = [
   { key: 'step1', label: 'Audio Understanding', desc: 'Transcribing voice memo & extracting intent', icon: Volume2 },
-  { key: 'step2', label: 'Receipt Analysis', desc: 'Vision model reading every field on the receipt', icon: Image },
+  { key: 'step2', label: 'Receipt Analysis', desc: 'OCR reading every field on the receipt', icon: Image },
   { key: 'step3', label: 'Reconciliation', desc: 'Reasoning across both modalities for mismatches', icon: GitMerge },
 ];
 
-// Steps 1 & 2 run in parallel on the backend.
-// Status flow: pending → step1 (both running) → step3 (reconciling) → done | error
-// We detect individual step completion by checking whether result data has arrived,
-// not by the status string alone — so each card lights up as soon as its data lands.
+// ── Step status ───────────────────────────────────────────────────────────────
+// Steps 1 & 2 run in parallel. We determine completion by checking whether the
+// result data has arrived, not by the status string alone — so each card lights
+// up the moment its data lands, even if the other parallel step hasn't finished.
 function stepStatus(run: Run | null, stepIndex: number): 'done' | 'running' | 'pending' | 'error' {
   if (!run) return 'pending';
   const s = run.status;
   if (s === 'error') {
-    // Show error on whichever step was last active
     if (stepIndex === 2 && run.audio_result && run.receipt_result) return 'error';
     if (stepIndex === 1 && run.audio_result && !run.receipt_result) return 'error';
     if (stepIndex === 0) return 'error';
@@ -65,7 +39,7 @@ function stepStatus(run: Run | null, stepIndex: number): 'done' | 'running' | 'p
   }
   if (stepIndex === 0) {
     if (run.audio_result) return 'done';
-    if (s !== 'pending') return 'running';
+    if (s !== 'pending' && s !== 'idle') return 'running';
     return 'pending';
   }
   if (stepIndex === 1) {
@@ -73,42 +47,38 @@ function stepStatus(run: Run | null, stepIndex: number): 'done' | 'running' | 'p
     if (s === 'step1' || s === 'step3' || s === 'done') return 'running';
     return 'pending';
   }
-  // stepIndex === 2: reconciliation
+  // stepIndex === 2
   if (s === 'done') return 'done';
   if (s === 'step3') return 'running';
   return 'pending';
 }
 
+// ── Component ─────────────────────────────────────────────────────────────────
 export default function ExpenseProcessing() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
-  const [run, setRun] = useState<Run | null>(null);
-  const [error, setError] = useState<string | null>(null);
+
+  // ── Live store (SSE path) ─────────────────────────────────────────────────
+  const store = usePipelineStore();
+  const hasStoreData = store.runId === params.id && store.status !== 'idle';
+
+  // ── Polling fallback (direct nav / page refresh) ──────────────────────────
+  const [polledRun, setPolledRun] = useState<Run | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    // Check for a cached result written by New.tsx when the server returned the
-    // full pipeline result inline (happens on Vercel where the pipeline runs
-    // synchronously and different Lambda instances can't share /tmp SQLite).
-    const cached = sessionStorage.getItem(`expense_run_${params.id}`);
-    if (cached) {
-      try {
-        const data = JSON.parse(cached) as Run;
-        setRun(data);
-        if (data.status === 'done') {
-          setTimeout(() => navigate(`/expenses/${params.id}/review`), 800);
-          return;
-        }
-        if (data.status === 'error') return;
-      } catch { /* ignore bad cache */ }
-    }
+    // If the Zustand store already has data for this run (SSE path), skip polling.
+    if (hasStoreData) return;
 
+    // Fallback: poll /api/expenses/:id every second.
+    // This also handles the case where the user navigated directly to this URL.
     const poll = async () => {
       try {
         const res = await fetch(`/api/expenses/${params.id}`);
-        if (!res.ok) { setError('Run not found'); return; }
+        if (!res.ok) { setPollError('Run not found'); return; }
         const data = await res.json() as Run;
-        setRun(data);
+        setPolledRun(data);
         if (data.status === 'done') {
           clearInterval(pollRef.current!);
           setTimeout(() => navigate(`/expenses/${params.id}/review`), 800);
@@ -117,15 +87,41 @@ export default function ExpenseProcessing() {
           clearInterval(pollRef.current!);
         }
       } catch {
-        setError('Failed to reach server');
+        setPollError('Failed to reach server');
       }
     };
 
     poll();
     pollRef.current = setInterval(poll, 1000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [params.id, navigate]);
+  }, [params.id, hasStoreData, navigate]);
 
+  // ── Navigate to review when SSE stream completes ──────────────────────────
+  useEffect(() => {
+    if (hasStoreData && store.status === 'done') {
+      setTimeout(() => navigate(`/expenses/${params.id}/review`), 800);
+    }
+  }, [store.status, hasStoreData, params.id, navigate]);
+
+  // ── Build the unified 'run' object consumed by the render ─────────────────
+  const run: Run | null = hasStoreData
+    ? {
+        id: params.id,
+        status: store.status,
+        audio_filename: null,
+        image_filename: null,
+        audio_result: store.audioResult,
+        receipt_result: store.receiptResult,
+        reconciled: store.reconciled,
+        overall_confidence: store.reconciled?.overall_confidence ?? null,
+        error_message: store.errorMessage,
+      }
+    : polledRun;
+
+  const error = pollError;
+  const currentStatus = run?.status ?? 'pending';
+
+  // ── Render ────────────────────────────────────────────────────────────────
   if (error) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#05060f] text-white">
@@ -147,7 +143,13 @@ export default function ExpenseProcessing() {
             </div>
             <div>
               <h1 className="text-sm font-semibold">Expense Reconciler</h1>
-              <p className="text-[11px] text-white/40">Processing your expense…</p>
+              <p className="text-[11px] text-white/40">
+                {currentStatus === 'done'
+                  ? 'Complete — redirecting…'
+                  : currentStatus === 'error'
+                  ? 'Pipeline error'
+                  : 'Results appear as each step finishes…'}
+              </p>
             </div>
           </div>
         </div>
@@ -155,12 +157,12 @@ export default function ExpenseProcessing() {
 
       <main className="mx-auto max-w-2xl px-6 py-12">
         <div className="mb-8 text-center">
-          {run?.status === 'done' ? (
+          {currentStatus === 'done' ? (
             <div className="flex items-center justify-center gap-2 text-green-400">
               <CheckCircle2 className="h-5 w-5" />
               <span className="font-medium">Analysis complete — redirecting…</span>
             </div>
-          ) : run?.status === 'error' ? (
+          ) : currentStatus === 'error' ? (
             <div className="flex items-center justify-center gap-2 text-red-400">
               <AlertCircle className="h-5 w-5" />
               <span className="font-medium">Pipeline error</span>
@@ -227,9 +229,9 @@ export default function ExpenseProcessing() {
                     </div>
                     <p className="mt-0.5 text-[11px] text-white/40">{step.desc}</p>
 
-                    {/* Step 1 result */}
+                    {/* Step 1 result — appears the moment audio analysis finishes */}
                     {i === 0 && run?.audio_result && (
-                      <div className="mt-3 rounded-xl border border-white/8 bg-white/3 p-4 space-y-2">
+                      <div className="mt-3 rounded-xl border border-white/8 bg-white/3 p-4 space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-500">
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
                           What I heard
                         </p>
@@ -246,9 +248,9 @@ export default function ExpenseProcessing() {
                       </div>
                     )}
 
-                    {/* Step 2 result */}
+                    {/* Step 2 result — appears the moment receipt OCR finishes */}
                     {i === 1 && run?.receipt_result && (
-                      <div className="mt-3 rounded-xl border border-white/8 bg-white/3 p-4 space-y-2">
+                      <div className="mt-3 rounded-xl border border-white/8 bg-white/3 p-4 space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-500">
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
                           What I read from the receipt
                         </p>
@@ -275,9 +277,9 @@ export default function ExpenseProcessing() {
                       </div>
                     )}
 
-                    {/* Step 3 result */}
+                    {/* Step 3 result — appears when reconciliation finishes */}
                     {i === 2 && run?.reconciled && (
-                      <div className="mt-3 rounded-xl border border-white/8 bg-white/3 p-4 space-y-2">
+                      <div className="mt-3 rounded-xl border border-white/8 bg-white/3 p-4 space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-500">
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
                           Reconciliation preview
                         </p>
@@ -307,7 +309,7 @@ export default function ExpenseProcessing() {
                       </div>
                     )}
 
-                    {/* Error */}
+                    {/* Error message */}
                     {i === 0 && status === 'error' && run?.error_message && (
                       <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 p-3">
                         <p className="text-xs text-red-400">{run.error_message}</p>
@@ -320,7 +322,7 @@ export default function ExpenseProcessing() {
           })}
         </div>
 
-        {run?.status === 'done' && (
+        {currentStatus === 'done' && (
           <div className="mt-6 flex justify-center">
             <button
               onClick={() => navigate(`/expenses/${params.id}/review`)}
@@ -331,7 +333,7 @@ export default function ExpenseProcessing() {
           </div>
         )}
 
-        {run?.status === 'error' && (
+        {currentStatus === 'error' && (
           <div className="mt-6 flex justify-center">
             <button
               onClick={() => navigate('/expenses/new')}
@@ -369,7 +371,7 @@ function Confidence({ value, label }: { value: number; label: string }) {
       <span className={`text-xs font-semibold ${color}`}>{pct}%</span>
       <div className="flex-1 h-1 rounded-full bg-white/10 overflow-hidden">
         <div
-          className={`h-full rounded-full ${pct >= 80 ? 'bg-green-500' : pct >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
+          className={`h-full rounded-full transition-all duration-700 ${pct >= 80 ? 'bg-green-500' : pct >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
           style={{ width: `${pct}%` }}
         />
       </div>
