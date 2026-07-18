@@ -115,79 +115,86 @@ Set confidence low (< 0.6) if the speaker is vague or contradicts themselves.`,
   };
 }
 
-// ─── Step 2: Receipt OCR + LLM analysis ───────────────────────────────────────
-// Uses tesseract.js (pure JS/WASM) to extract text from the receipt image,
-// then sends the raw text to the LLM for structured parsing.
-// Works in all environments including Vercel serverless (no native binary needed).
-import Tesseract from "tesseract.js";
+// ─── Step 2: Receipt analysis via Google Gemini Flash vision ──────────────────
+// Sends the receipt image as base64 directly to Gemini Flash, which handles
+// both reading and structured parsing in a single API call.
+// Pure REST — no native binaries, no WASM, works on Vercel serverless.
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+// gemini-2.0-flash-lite is the high-volume free-tier model; falls back to
+// the generic alias if the specific version is unavailable on this key.
+const GEMINI_MODEL = "gemini-2.0-flash-lite";
 
-async function ocrReceipt(imageBuffer: Buffer): Promise<string> {
-  const result = await Tesseract.recognize(imageBuffer, "eng", {
-    // suppress verbose progress logs
-    logger: () => {},
-  });
-  return result.data.text.trim();
+function getGeminiKey(): string {
+  const key = process.env["GOOGLE_AI_API_KEY"];
+  if (!key) throw new Error("GOOGLE_AI_API_KEY not set — add it to your environment variables");
+  return key;
 }
 
 export async function analyzeReceipt(
   imageBuffer: Buffer,
   mimeType: string
 ): Promise<ReceiptResult> {
-  const key = getKey();
+  const key = getGeminiKey();
+  const base64 = imageBuffer.toString("base64");
 
-  // Step 2a: OCR the image
-  const ocrText = await ocrReceipt(imageBuffer);
-  if (!ocrText) throw new Error("Tesseract returned empty text — image may be unreadable");
-
-  // Step 2b: LLM parses the raw OCR text into structured data
-  const res = await fetch(`${GROQ_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        {
-          role: "system",
-          content: `You are parsing raw OCR text extracted from a receipt image. The OCR may contain noise, mis-spellings, or garbled characters — interpret charitably.
+  const prompt = `Analyze this receipt image and return structured data.
 Return ONLY valid JSON with this exact schema — no markdown fences, no extra text:
 {
-  "vendor": string,
-  "line_items": [{"description": string, "amount": number}],
-  "total": number,
-  "date": "YYYY-MM-DD" or null,
-  "category_guess": string,
+  "vendor": "store or restaurant name",
+  "line_items": [{"description": "item name", "amount": 0.00}],
+  "total": 0.00,
+  "date": "YYYY-MM-DD or null",
+  "category_guess": "one of: Food and Beverage, Travel, Accommodation, Office Supplies, Entertainment, Healthcare, Other",
   "field_confidence": {
-    "vendor": 0.0–1.0,
-    "total": 0.0–1.0,
-    "date": 0.0–1.0,
-    "line_items": 0.0–1.0
+    "vendor": 0.0,
+    "total": 0.0,
+    "date": 0.0,
+    "line_items": 0.0
   }
 }
-Field confidence rules:
-- Set below 0.7 for any field with heavy OCR noise or ambiguity
-- Set below 0.5 if the field is absent or clearly garbled
-- Only set above 0.9 if the field is cleanly readable`,
-        },
-        {
-          role: "user",
-          content: `Raw OCR text from receipt:\n\n${ocrText}\n\nParse into the structured receipt JSON.`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.1,
-    }),
-  });
+Set confidence values low (< 0.7) for fields that are hard to read or ambiguous.
+Set confidence values high (> 0.9) only when the field is clearly legible.`;
+
+  const res = await fetch(
+    `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { inline_data: { mime_type: mimeType, data: base64 } },
+              { text: prompt },
+            ],
+          },
+        ],
+        generationConfig: { temperature: 0.1 },
+      }),
+    }
+  );
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Receipt analysis failed (${res.status}): ${err}`);
+    throw new Error(`Gemini receipt analysis failed (${res.status}): ${err}`);
   }
 
-  const data = (await res.json()) as { choices: { message: { content: string } }[] };
-  return JSON.parse(data.choices[0].message.content) as ReceiptResult;
+  const data = (await res.json()) as {
+    candidates: { content: { parts: { text: string }[] } }[];
+  };
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  // Strip markdown fences if Gemini wraps the JSON despite the prompt
+  const clean = raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  const parsed = JSON.parse(clean) as ReceiptResult;
+
+  return {
+    vendor: parsed.vendor ?? "Unknown",
+    line_items: parsed.line_items ?? [],
+    total: parsed.total ?? 0,
+    date: parsed.date ?? null,
+    category_guess: parsed.category_guess ?? "Other",
+    field_confidence: parsed.field_confidence ?? {},
+  };
 }
 
 // ─── Step 3: Cross-modal reconciliation ───────────────────────────────────────

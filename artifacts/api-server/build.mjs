@@ -96,7 +96,6 @@ async function buildAll() {
       "wrangler",
       "zeromq",
       "zeromq-prebuilt",
-      "tesseract.js",
       "playwright",
       "puppeteer",
       "puppeteer-core",
