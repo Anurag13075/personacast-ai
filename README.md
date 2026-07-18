@@ -21,24 +21,22 @@ The value comes entirely from the *tension* between the two sources. The AI's jo
 [Audio File] ──▶ Groq Whisper ──▶ transcript
                                        │
                                        ▼
-                              Groq Llama 3.3-70B ──▶ AudioResult
+                              Groq gpt-oss-120b ──▶ AudioResult
                               (intent extraction)      { claimed_amount,
                                                          claimed_counterparty,
                                                          claimed_date,
                                                          claimed_purpose,
                                                          confidence }
                                                               │
-[Receipt Image] ──▶ displayed ──▶ user fills fields           │
-                   to user                                    │
-                                       │                      │
-                              ReceiptResult                   │
-                              { vendor, total,                │
-                                date, category,               │
-                                field_confidence }            │
-                                       │                      │
+[Receipt Image] ──▶ Groq qwen3.6-27b (vision) ──▶ ReceiptResult
+                                                    { vendor, total,
+                                                      date, line_items,
+                                                      category_guess,
+                                                      field_confidence }
+                                                              │
                                        └──────────┬───────────┘
                                                   ▼
-                                       Groq Llama 3.3-70B
+                                       Groq gpt-oss-120b
                                        (cross-modal reconciliation)
                                                   │
                                                   ▼
@@ -50,37 +48,37 @@ The value comes entirely from the *tension* between the two sources. The AI's jo
 ```
 
 ### Step 1 — Audio Understanding (non-text modality → structured intent)
-**Input:** Audio file (WAV/MP3/M4A/WebM) or live browser mic recording  
-**Processing:** Groq Whisper large-v3 transcribes the audio to text, then Groq Llama 3.3-70B extracts structured intent via JSON-mode  
-**Output:** `AudioResult` — claimed amount, vendor, date, purpose, and a confidence score  
+**Input:** Audio file (WAV/MP3/M4A/WebM) or live browser mic recording
+**Processing:** Groq Whisper large-v3 transcribes the audio to text, then Groq gpt-oss-120b extracts structured intent via JSON-mode
+**Output:** `AudioResult` — claimed amount, vendor, date, purpose, and a confidence score
 **Schema is strict:** the model must return `null` for fields it cannot extract; it cannot hallucinate values
 
-### Step 2 — Receipt Data (non-text reference → structured fields)
-**Input:** Receipt image (displayed to the user as reference) + manually entered fields  
-**Processing:** Instant — no API call. The user reads their own receipt and enters vendor, total, date, and category  
-**Output:** `ReceiptResult` — same shape as Step 1's output, with field-level confidence set to 1.0 for user-entered fields  
-**Design decision:** Human verification over vision-model guessing. The receipt is the ground truth; accuracy here matters more than automation.
+### Step 2 — Receipt Vision (non-text modality → structured fields)
+**Input:** Receipt image (JPG/PNG/PDF)
+**Processing:** Groq qwen3.6-27b, a vision-capable model, reads the image directly and extracts vendor, line items, total, date, and category as JSON, with per-field confidence
+**Output:** `ReceiptResult` — same shape as Step 1's output, but every field and confidence value comes from the model actually looking at the image, not from user-typed data
+**Design decision:** The user never types the receipt's contents. If the model misreads a field, it's visible as a low-confidence flag and correctable in the edit step — not silently trusted
 
 ### Step 3 — Cross-Modal Reconciliation (reasoning across both)
-**Input:** `AudioResult` + `ReceiptResult` + optional policy notes  
-**Processing:** Groq Llama 3.3-70B with a structured reasoning protocol — compares each field pair, checks policy rules, assigns flag severity  
+**Input:** `AudioResult` + `ReceiptResult` + optional policy notes
+**Processing:** Groq gpt-oss-120b with a structured reasoning protocol — compares each field pair, checks policy rules, assigns flag severity
 **Output:** `ReconciledExpense` — final amounts, flags with severity (high/medium/low), overall confidence, and step-by-step reasoning text
 
-The pipeline streams results via SSE. Steps 1 and 2 run in parallel. The UI updates each step card the moment its result arrives — the user never stares at a blank screen.
+The pipeline streams results via SSE. Steps 1 and 2 run in parallel — each is a real model call, so both are genuinely asynchronous, not one instant and one delayed. The UI updates each step card the moment its result arrives — the user never stares at a blank screen.
 
 ## Handling Uncertainty
 
 Uncertainty is surfaced at three levels:
 
-1. **Per-field audio confidence** — extracted from Llama's JSON output. Fields the model is unsure about (e.g. a mumbled amount) get `< 0.7` confidence and trigger a ⚠ badge in the UI.
+1. **Per-field confidence on both sources** — extracted from each model's own JSON output. For audio, a mumbled or contradicted claim drops confidence below 0.6. For the receipt, a blurry, cropped, or handwritten field drops confidence below 0.7. Both trigger a ⚠ badge in the UI — this is model-derived, not a placeholder value.
 2. **Flag severity** — each mismatch is tagged `high` / `medium` / `low`. Amount mismatches > 10% are high. Date mismatches are medium. Vague purpose matches are low.
 3. **Overall confidence** — a 0–1 score on the reconciled output, displayed as a color-coded percentage. It reflects how well the two sources agree and whether any policy rules were violated.
 
-Uncertainty is never silently absorbed. If a field cannot be extracted from audio, the model returns `null` — the flag system then surfaces it as a low-confidence data point, not a fabricated value.
+Uncertainty is never silently absorbed. If a field cannot be read from either the audio or the receipt image, the model returns `null` and confidence 0 — the flag system then surfaces it as a low-confidence data point, not a fabricated value. The user can always correct a field the AI misread; that correction is tracked in the edit history, not lost.
 
 ## What I Would Build Next
 
-1. **Vision model for receipt OCR** — When Groq ships vision model access, Step 2 becomes fully automated. The human verification step was a pragmatic choice, not the target architecture.
+1. **Confidence-weighted auto-approval** — Runs where every field is high-confidence and no flags fire could skip manual review entirely; low-confidence or flagged runs route to a human queue.
 2. **Batch reconciliation** — Upload a folder of receipts + a voice memo dump from a business trip. The pipeline fans out, reconciles each receipt independently, and produces a summary report.
 3. **Policy rule library** — A persistent, editable set of company expense rules that applies to every submission without the user having to paste them each time.
 4. **Integration with expense management systems** — Push reconciled, approved expenses directly to Expensify, Concur, or a custom ERP via webhook.
@@ -92,7 +90,7 @@ Uncertainty is never silently absorbed. If a field cannot be extracted from audi
 |---|---|
 | Frontend | React 19, Vite, Tailwind CSS v4, Wouter, Framer Motion, Zustand |
 | Backend | Express 5, TypeScript, esbuild |
-| AI | Groq Whisper large-v3 (audio), Groq Llama 3.3-70B (intent + reconciliation) |
+| AI | Groq Whisper large-v3 (audio transcription), Groq qwen3.6-27b (receipt vision), Groq gpt-oss-120b (intent extraction + reconciliation) |
 | Database | SQLite via better-sqlite3 |
 | Streaming | Server-Sent Events (SSE) |
 
