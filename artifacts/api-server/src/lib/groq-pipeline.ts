@@ -116,29 +116,17 @@ Set confidence low (< 0.6) if the speaker is vague or contradicts themselves.`,
 }
 
 // ─── Step 2: Receipt OCR + LLM analysis ───────────────────────────────────────
-// Uses Tesseract OCR to extract text from the receipt image, then sends the
-// raw text to the LLM for structured parsing. This avoids needing a vision
-// model and works with any Groq text model.
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { writeFile, unlink } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+// Uses tesseract.js (pure JS/WASM) to extract text from the receipt image,
+// then sends the raw text to the LLM for structured parsing.
+// Works in all environments including Vercel serverless (no native binary needed).
+import Tesseract from "tesseract.js";
 
-const execFileAsync = promisify(execFile);
-
-async function ocrReceipt(imageBuffer: Buffer, mimeType: string): Promise<string> {
-  const ext = mimeType.includes("png") ? "png" : mimeType.includes("gif") ? "gif" : "jpg";
-  const tmpPath = join(tmpdir(), `receipt-${Date.now()}.${ext}`);
-  await writeFile(tmpPath, imageBuffer);
-  try {
-    const { stdout } = await execFileAsync("tesseract", [tmpPath, "stdout"], {
-      timeout: 30_000,
-    });
-    return stdout.trim();
-  } finally {
-    await unlink(tmpPath).catch(() => {});
-  }
+async function ocrReceipt(imageBuffer: Buffer): Promise<string> {
+  const result = await Tesseract.recognize(imageBuffer, "eng", {
+    // suppress verbose progress logs
+    logger: () => {},
+  });
+  return result.data.text.trim();
 }
 
 export async function analyzeReceipt(
@@ -148,7 +136,7 @@ export async function analyzeReceipt(
   const key = getKey();
 
   // Step 2a: OCR the image
-  const ocrText = await ocrReceipt(imageBuffer, mimeType);
+  const ocrText = await ocrReceipt(imageBuffer);
   if (!ocrText) throw new Error("Tesseract returned empty text — image may be unreadable");
 
   // Step 2b: LLM parses the raw OCR text into structured data
