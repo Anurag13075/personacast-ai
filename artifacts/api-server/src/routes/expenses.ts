@@ -5,7 +5,7 @@ import { queries } from "../lib/database.js";
 import {
   transcribeAudio,
   extractAudioIntent,
-  buildReceiptFromManual,
+  extractReceiptData,
   reconcileExpense,
   type AudioResult,
   type ReceiptResult,
@@ -15,7 +15,7 @@ import { logger } from "../lib/logger.js";
 
 const router = Router();
 
-// Accept optional audio file + optional receipt image (for display reference only)
+// Accept optional audio file (or typed transcript) + required receipt image (AI-processed)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
@@ -34,9 +34,8 @@ function sendEvent(res: Response, event: object) {
 //   audio         — audio file (optional; WAV/MP3/M4A/WebM). If provided, Groq
 //                   Whisper transcribes it and that transcript is used for Step 1.
 //                   If omitted, 'transcript' text field is used instead.
-//   receiptImage  — receipt image (optional; stored for display reference only)
+//   receiptImage  — receipt image (required; processed by Groq vision model)
 //   transcript    — text fallback when no audio file is uploaded
-//   receiptVendor, receiptTotal, receiptDate, receiptCategory — receipt fields
 //   policyNotes   — optional policy/context rules
 //
 // Returns an SSE stream. Events:
@@ -57,24 +56,17 @@ router.post(
     const receiptImageFile = files?.receiptImage?.[0];
 
     const b = req.body as Record<string, string>;
-    const transcript      = typeof b?.transcript      === "string" ? b.transcript.trim()      : "";
-    const receiptVendor   = typeof b?.receiptVendor   === "string" ? b.receiptVendor.trim()   : "";
-    const receiptTotal    = parseFloat(b?.receiptTotal ?? "0") || 0;
-    const receiptDate     = typeof b?.receiptDate     === "string" && b.receiptDate ? b.receiptDate : null;
-    const receiptCategory = typeof b?.receiptCategory === "string" ? b.receiptCategory : "Other";
-    const policyNotes     = typeof b?.policyNotes     === "string" ? b.policyNotes.trim() || undefined : undefined;
+    const transcript  = typeof b?.transcript  === "string" ? b.transcript.trim() : "";
+    const policyNotes = typeof b?.policyNotes === "string" ? b.policyNotes.trim() || undefined : undefined;
 
     // Need either an audio file or a typed transcript
     if (!audioFile && !transcript) {
       res.status(400).json({ error: "Provide either an audio file or a typed transcript" });
       return;
     }
-    if (!receiptVendor) {
-      res.status(400).json({ error: "'receiptVendor' is required" });
-      return;
-    }
-    if (!receiptTotal) {
-      res.status(400).json({ error: "'receiptTotal' is required" });
+    // Receipt image is now a required, AI-processed modality — not optional.
+    if (!receiptImageFile) {
+      res.status(400).json({ error: "A receipt image is required" });
       return;
     }
 
@@ -88,26 +80,20 @@ router.post(
     const runId = randomUUID();
     const now = new Date().toISOString();
     const audioLabel = audioFile ? audioFile.originalname : transcript.slice(0, 200);
-    const imageLabel = receiptImageFile?.originalname ?? receiptVendor;
+    const imageLabel = receiptImageFile.originalname;
 
     queries.createRun.run(runId, now, audioLabel, imageLabel, policyNotes ?? null);
     sendEvent(res, { type: "created", id: runId });
 
     // Emit a processing time estimate so the user isn't staring at a blank spinner
-    const estimatedSeconds = audioFile ? 20 : 12;
+    // Both steps now make real model calls and run in parallel, so estimate off
+    // the slower of the two (audio: transcription + extraction; vision: extraction)
+    const estimatedSeconds = audioFile ? 22 : 15;
     sendEvent(res, { type: "time_estimate", seconds: estimatedSeconds });
 
     try {
       queries.updateRunStatus.run("step1", runId);
       logger.info({ runId, hasAudio: !!audioFile }, "Pipeline: steps 1+2 starting");
-
-      // Step 2 is instant (manual data) — build it now so it can resolve immediately
-      const manualReceipt = buildReceiptFromManual({
-        vendor: receiptVendor,
-        total: receiptTotal,
-        date: receiptDate,
-        category: receiptCategory,
-      });
 
       const [audioResult, receiptResult] = await Promise.all([
 
@@ -130,12 +116,17 @@ router.post(
           return result;
         })(),
 
-        // Step 2: manual receipt data — instant, no API call
+        // Step 2: receipt image → Groq qwen3.6-27b vision → structured fields
         (async (): Promise<ReceiptResult> => {
-          queries.saveReceiptOnly.run(JSON.stringify(manualReceipt), runId);
-          sendEvent(res, { type: "step2_done", receipt_result: manualReceipt });
-          logger.info({ runId }, "Pipeline: step 2 done (manual entry)");
-          return manualReceipt;
+          logger.info({ runId }, "Step 2: extracting receipt via vision model");
+          const result = await extractReceiptData(
+            receiptImageFile.buffer,
+            receiptImageFile.mimetype,
+          );
+          queries.saveReceiptOnly.run(JSON.stringify(result), runId);
+          sendEvent(res, { type: "step2_done", receipt_result: result });
+          logger.info({ runId }, "Pipeline: step 2 done (vision extraction)");
+          return result;
         })(),
       ]);
 
