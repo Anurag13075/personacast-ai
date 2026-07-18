@@ -4,16 +4,6 @@ import { toast } from 'sonner';
 import { Receipt, Mic, ArrowRight, History, Loader2, Square, Sparkles, FileAudio, Image, X } from 'lucide-react';
 import { usePipelineStore } from '@/stores/pipelineStore';
 
-const CATEGORIES = [
-  'Food and Beverage',
-  'Travel',
-  'Accommodation',
-  'Office Supplies',
-  'Entertainment',
-  'Healthcare',
-  'Other',
-];
-
 export default function ExpenseNew() {
   const [, navigate] = useLocation();
 
@@ -30,10 +20,6 @@ export default function ExpenseNew() {
   // ── Receipt ──────────────────────────────────────────────────────────────
   const [receiptImage, setReceiptImage] = useState<File | null>(null);
   const [receiptImageUrl, setReceiptImageUrl] = useState<string | null>(null);
-  const [vendor, setVendor] = useState('');
-  const [total, setTotal] = useState('');
-  const [date, setDate] = useState('');
-  const [category, setCategory] = useState('Other');
   const receiptInputRef = useRef<HTMLInputElement>(null);
 
   // ── Misc ─────────────────────────────────────────────────────────────────
@@ -108,12 +94,11 @@ export default function ExpenseNew() {
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const hasAudio = !!audioFile || transcript.trim().length > 0;
-  const canSubmit = hasAudio && vendor.trim().length > 0 && !!total && !isNaN(parseFloat(total)) && !loading;
+  const canSubmit = hasAudio && !!receiptImage && !loading;
 
   const submit = async () => {
     if (!hasAudio) { toast.error('Upload an audio file or record/type a voice memo'); return; }
-    if (!vendor.trim()) { toast.error('Please enter the vendor name'); return; }
-    if (!total || isNaN(parseFloat(total))) { toast.error('Please enter a valid total amount'); return; }
+    if (!receiptImage) { toast.error('Please upload a receipt image'); return; }
 
     setLoading(true);
     usePipelineStore.getState().reset();
@@ -125,11 +110,7 @@ export default function ExpenseNew() {
       } else {
         form.append('transcript', transcript.trim());
       }
-      if (receiptImage) form.append('receiptImage', receiptImage);
-      form.append('receiptVendor', vendor.trim());
-      form.append('receiptTotal', String(parseFloat(total)));
-      form.append('receiptCategory', category);
-      if (date) form.append('receiptDate', date);
+      form.append('receiptImage', receiptImage);
       if (policyNotes.trim()) form.append('policyNotes', policyNotes.trim());
 
       const res = await fetch('/api/expenses', { method: 'POST', body: form });
@@ -202,7 +183,7 @@ export default function ExpenseNew() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight">Reconcile an expense</h1>
           <p className="mt-1.5 text-sm text-[#71717a]">
-            Upload or record a voice memo, then enter the receipt details. The AI cross-checks both and flags every mismatch.
+            Upload or record a voice memo, then photograph the receipt. The AI reads both and flags every mismatch.
           </p>
         </div>
 
@@ -328,13 +309,13 @@ export default function ExpenseNew() {
               <Receipt className="h-3.5 w-3.5 text-[#71717a]" />
             </div>
             <div>
-              <p className="text-sm font-medium">Receipt Details <span className="text-red-400 text-[11px] font-normal">required</span></p>
-              <p className="text-[11px] text-[#a1a1aa]">Upload receipt image for reference, then fill in the key fields</p>
+              <p className="text-sm font-medium">Receipt Photo <span className="text-red-400 text-[11px] font-normal">required</span></p>
+              <p className="text-[11px] text-[#a1a1aa]">The AI reads vendor, total, date, and line items directly from the image</p>
             </div>
           </div>
 
-          {/* Receipt image upload (reference display) */}
-          <div className="mb-4">
+          {/* Receipt image upload — this is the real second modality, processed by AI */}
+          <div>
             <input
               ref={receiptInputRef}
               type="file"
@@ -356,7 +337,7 @@ export default function ExpenseNew() {
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
-                <p className="mt-1 text-[10px] text-[#a1a1aa] text-center">Receipt uploaded · enter details below</p>
+                <p className="mt-1 text-[10px] text-[#a1a1aa] text-center">Receipt uploaded — the AI will extract fields when you submit</p>
               </div>
             ) : (
               <div
@@ -366,60 +347,10 @@ export default function ExpenseNew() {
                 className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-[#d4d4d8] bg-white p-5 hover:border-[#a1a1aa] hover:bg-[#f4f4f5] transition"
               >
                 <Image className="h-5 w-5 text-[#a1a1aa]" />
-                <p className="text-xs text-[#71717a]">Upload receipt image <span className="text-[#a1a1aa]">optional</span></p>
-                <p className="text-[10px] text-[#a1a1aa]">JPG · PNG · PDF — displayed as reference while you fill in the fields</p>
+                <p className="text-xs text-[#71717a]">Upload receipt image</p>
+                <p className="text-[10px] text-[#a1a1aa]">JPG · PNG · PDF — vendor, total, and date are extracted by AI, editable after review</p>
               </div>
             )}
-          </div>
-
-          {/* Manual fields */}
-          <div className="space-y-3">
-            <div>
-              <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Vendor / Merchant <span className="text-red-400">*</span></label>
-              <input
-                type="text"
-                value={vendor}
-                onChange={(e) => setVendor(e.target.value)}
-                placeholder="e.g. The Coffee Collective"
-                className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Total Amount <span className="text-red-400">*</span></label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a1a1aa]">$</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={total}
-                    onChange={(e) => setTotal(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full rounded-xl border border-[#e4e4e7] bg-white py-2.5 pl-7 pr-4 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Date <span className="text-[#a1a1aa] font-normal">optional</span></label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Category</label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
-              >
-                {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </div>
           </div>
         </div>
 
@@ -460,7 +391,7 @@ export default function ExpenseNew() {
         <div className="mt-8 grid grid-cols-3 gap-3">
           {[
             { n: '1', label: 'Audio → Intent', desc: 'Whisper transcribes · Groq extracts structured intent' },
-            { n: '2', label: 'Receipt Data', desc: 'Manual fields cross-referenced with voice memo' },
+            { n: '2', label: 'Receipt Vision', desc: 'AI reads vendor, total, date from the photo' },
             { n: '3', label: 'Reconciliation', desc: 'Groq reasons across both modalities · flags mismatches' },
           ].map((s) => (
             <div key={s.n} className="rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4">
