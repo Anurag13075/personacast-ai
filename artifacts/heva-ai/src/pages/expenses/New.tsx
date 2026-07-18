@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { Receipt, Mic, ArrowRight, History, Loader2, Square, Sparkles } from 'lucide-react';
+import { Receipt, Mic, ArrowRight, History, Loader2, Square, Sparkles, FileAudio, Image, X } from 'lucide-react';
 import { usePipelineStore } from '@/stores/pipelineStore';
 
 const CATEGORIES = [
@@ -16,35 +16,55 @@ const CATEGORIES = [
 
 export default function ExpenseNew() {
   const [, navigate] = useLocation();
-  // Receipt fields
+
+  // ── Audio input ──────────────────────────────────────────────────────────
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [transcript, setTranscript] = useState('');
+  const [interimText, setInterimText] = useState('');
+  const [recording, setRecording] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const finalRef = useRef('');
+  const audioInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Receipt ──────────────────────────────────────────────────────────────
+  const [receiptImage, setReceiptImage] = useState<File | null>(null);
+  const [receiptImageUrl, setReceiptImageUrl] = useState<string | null>(null);
   const [vendor, setVendor] = useState('');
   const [total, setTotal] = useState('');
   const [date, setDate] = useState('');
   const [category, setCategory] = useState('Other');
-  // Voice/transcript
-  const [transcript, setTranscript] = useState('');
-  const [interimText, setInterimText] = useState('');
-  const [recording, setRecording] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Misc ─────────────────────────────────────────────────────────────────
   const [policyNotes, setPolicyNotes] = useState('');
   const [loading, setLoading] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
-  const finalRef = useRef('');
+
+  // ── Audio handlers ────────────────────────────────────────────────────────
+  const handleAudioFile = (file: File) => {
+    if (!file.type.startsWith('audio/') && !file.name.match(/\.(wav|mp3|m4a|webm|ogg|flac)$/i)) {
+      toast.error('Please upload an audio file (WAV, MP3, M4A, WebM)');
+      return;
+    }
+    setAudioFile(file);
+    setTranscript(''); // clear typed transcript when file uploaded
+    finalRef.current = '';
+  };
 
   const startRecording = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
-      toast.error('Speech recognition not supported — try Chrome or Edge, or type your memo below');
+      toast.error('Speech recognition not supported — try Chrome or Edge, or upload an audio file');
       return;
     }
+    setAudioFile(null); // clear file when recording live
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec = new SR() as any;
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = 'en-US';
     finalRef.current = transcript;
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rec.onresult = (e: any) => {
       let interim = '';
@@ -64,7 +84,6 @@ export default function ExpenseNew() {
       if (e.error !== 'aborted') toast.error(`Mic error: ${e.error}`);
       setRecording(false); setInterimText('');
     };
-
     recognitionRef.current = rec;
     rec.start();
     setRecording(true);
@@ -76,38 +95,52 @@ export default function ExpenseNew() {
     setInterimText('');
   };
 
+  // ── Receipt image handler ─────────────────────────────────────────────────
+  const handleReceiptImage = (file: File) => {
+    if (!file.type.startsWith('image/') && !file.name.endsWith('.pdf')) {
+      toast.error('Please upload an image or PDF');
+      return;
+    }
+    setReceiptImage(file);
+    const url = URL.createObjectURL(file);
+    setReceiptImageUrl(url);
+  };
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+  const hasAudio = !!audioFile || transcript.trim().length > 0;
+  const canSubmit = hasAudio && vendor.trim().length > 0 && !!total && !isNaN(parseFloat(total)) && !loading;
+
   const submit = async () => {
+    if (!hasAudio) { toast.error('Upload an audio file or record/type a voice memo'); return; }
     if (!vendor.trim()) { toast.error('Please enter the vendor name'); return; }
     if (!total || isNaN(parseFloat(total))) { toast.error('Please enter a valid total amount'); return; }
-    if (!transcript.trim()) { toast.error('Please record a voice memo or type a description'); return; }
 
     setLoading(true);
     usePipelineStore.getState().reset();
 
     try {
-      const body: Record<string, string> = {
-        transcript: transcript.trim(),
-        receiptVendor: vendor.trim(),
-        receiptTotal: String(parseFloat(total)),
-        receiptCategory: category,
-      };
-      if (date) body.receiptDate = date;
-      if (policyNotes.trim()) body.policyNotes = policyNotes.trim();
+      const form = new FormData();
+      if (audioFile) {
+        form.append('audio', audioFile);
+      } else {
+        form.append('transcript', transcript.trim());
+      }
+      if (receiptImage) form.append('receiptImage', receiptImage);
+      form.append('receiptVendor', vendor.trim());
+      form.append('receiptTotal', String(parseFloat(total)));
+      form.append('receiptCategory', category);
+      if (date) form.append('receiptDate', date);
+      if (policyNotes.trim()) form.append('policyNotes', policyNotes.trim());
 
-      const res = await fetch('/api/expenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch('/api/expenses', { method: 'POST', body: form });
 
       if (!res.ok || !res.body) {
         const text = await res.text();
-        let msg = 'Upload failed';
+        let msg = 'Submission failed';
         try { msg = (JSON.parse(text) as { error?: string }).error ?? msg; } catch { /* */ }
         throw new Error(msg);
       }
 
-      // Stream SSE events — navigate as soon as run ID arrives, keep reading in background
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -140,12 +173,10 @@ export default function ExpenseNew() {
 
       void readStream();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed');
+      toast.error(err instanceof Error ? err.message : 'Submission failed');
       setLoading(false);
     }
   };
-
-  const canSubmit = vendor.trim().length > 0 && !!total && !isNaN(parseFloat(total)) && transcript.trim().length > 0 && !loading;
 
   return (
     <div className="min-h-screen bg-white text-[#09090b]" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -171,24 +202,178 @@ export default function ExpenseNew() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight">Reconcile an expense</h1>
           <p className="mt-1.5 text-sm text-[#71717a]">
-            Enter the receipt details and describe the expense by voice or text. The AI flags every mismatch.
+            Upload or record a voice memo, then enter the receipt details. The AI cross-checks both and flags every mismatch.
           </p>
         </div>
 
-        {/* ── Receipt details ── */}
+        {/* ── Step 1: Audio input ── */}
         <div className="rounded-2xl border border-[#e4e4e7] bg-[#fafafa] p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#e4e4e7] bg-white">
+              <Mic className="h-3.5 w-3.5 text-[#71717a]" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">
+                Voice Memo <span className="text-red-400 text-[11px] font-normal">required</span>
+              </p>
+              <p className="text-[11px] text-[#a1a1aa]">Upload an audio file (Groq Whisper) or record live via browser mic</p>
+            </div>
+          </div>
+
+          {/* Audio file upload zone */}
+          <div
+            onClick={() => !audioFile && audioInputRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleAudioFile(f); }}
+            className={`relative flex items-center gap-3 rounded-xl border border-dashed p-4 transition ${
+              audioFile
+                ? 'border-[#09090b] bg-white cursor-default'
+                : 'border-[#d4d4d8] bg-white hover:border-[#a1a1aa] cursor-pointer'
+            }`}
+          >
+            <input
+              ref={audioInputRef}
+              type="file"
+              accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg,.flac"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAudioFile(f); }}
+            />
+            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${audioFile ? 'border-[#e4e4e7] bg-[#fafafa] text-[#09090b]' : 'border-[#e4e4e7] bg-[#fafafa] text-[#a1a1aa]'}`}>
+              <FileAudio className="h-4 w-4" />
+            </div>
+            {audioFile ? (
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-sm font-medium text-[#09090b]">{audioFile.name}</p>
+                <p className="text-[11px] text-[#a1a1aa]">{(audioFile.size / 1024).toFixed(0)} KB · Groq Whisper will transcribe this</p>
+              </div>
+            ) : (
+              <div className="flex-1">
+                <p className="text-sm font-medium text-[#52525b]">Drop audio file or click to upload</p>
+                <p className="text-[11px] text-[#a1a1aa]">WAV · MP3 · M4A · WebM · OGG — up to 50 MB</p>
+              </div>
+            )}
+            {audioFile && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setAudioFile(null); }}
+                className="shrink-0 rounded-full p-1 text-[#a1a1aa] hover:text-[#09090b] transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* OR divider */}
+          <div className="my-3 flex items-center gap-3">
+            <div className="flex-1 h-px bg-[#e4e4e7]" />
+            <span className="text-[11px] text-[#a1a1aa]">or use browser mic / type</span>
+            <div className="flex-1 h-px bg-[#e4e4e7]" />
+          </div>
+
+          {/* Live recording + textarea */}
+          <div className="flex items-start gap-3">
+            <button
+              type="button"
+              onClick={recording ? stopRecording : startRecording}
+              disabled={!!audioFile}
+              className={`shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                audioFile
+                  ? 'bg-[#f4f4f5] text-[#a1a1aa] cursor-not-allowed'
+                  : recording
+                  ? 'border border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                  : 'bg-[#09090b] text-white hover:bg-[#27272a]'
+              }`}
+            >
+              {recording ? <><Square className="h-3 w-3 fill-red-500 text-red-500" /> Stop</> : <><Mic className="h-3.5 w-3.5" /> Record</>}
+            </button>
+            <div className="relative flex-1">
+              <textarea
+                value={recording ? transcript + interimText : transcript}
+                onChange={(e) => { if (!recording && !audioFile) setTranscript(e.target.value); }}
+                readOnly={recording || !!audioFile}
+                placeholder={audioFile ? 'Audio file will be transcribed by Groq Whisper…' : 'e.g. "Team lunch at The Coffee Collective, about $38, July 15th, client entertainment"'}
+                rows={3}
+                className={`w-full resize-none rounded-xl border border-[#e4e4e7] bg-white px-4 py-3 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5 ${
+                  (recording || audioFile) ? 'cursor-default select-none opacity-60' : ''
+                }`}
+              />
+              {recording && (
+                <div className="pointer-events-none absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                  <span className="text-[10px] font-medium text-red-600">listening…</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {(audioFile || (transcript.trim() && !recording)) && (
+            <div className="mt-2 flex items-center gap-1 text-[11px] text-[#22c55e]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#22c55e]" />
+              {audioFile ? 'Audio ready — Whisper will transcribe on submit' : 'Transcript ready'}
+              {!audioFile && transcript.trim() && (
+                <button
+                  type="button"
+                  onClick={() => { setTranscript(''); finalRef.current = ''; }}
+                  className="ml-auto text-[#a1a1aa] hover:text-[#71717a]"
+                >Clear</button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Step 2: Receipt ── */}
+        <div className="mt-4 rounded-2xl border border-[#e4e4e7] bg-[#fafafa] p-5">
           <div className="mb-4 flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#e4e4e7] bg-white">
               <Receipt className="h-3.5 w-3.5 text-[#71717a]" />
             </div>
             <div>
-              <p className="text-sm font-medium">Receipt Details</p>
-              <p className="text-[11px] text-[#a1a1aa]">Enter the key fields from your receipt</p>
+              <p className="text-sm font-medium">Receipt Details <span className="text-red-400 text-[11px] font-normal">required</span></p>
+              <p className="text-[11px] text-[#a1a1aa]">Upload receipt image for reference, then fill in the key fields</p>
             </div>
           </div>
 
+          {/* Receipt image upload (reference display) */}
+          <div className="mb-4">
+            <input
+              ref={receiptInputRef}
+              type="file"
+              accept="image/*,.pdf"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleReceiptImage(f); }}
+            />
+            {receiptImageUrl ? (
+              <div className="relative">
+                <img
+                  src={receiptImageUrl}
+                  alt="Receipt"
+                  className="w-full max-h-64 object-contain rounded-xl border border-[#e4e4e7] bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => { setReceiptImage(null); setReceiptImageUrl(null); }}
+                  className="absolute right-2 top-2 rounded-full bg-white p-1 shadow border border-[#e4e4e7] text-[#52525b] hover:text-[#09090b]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                <p className="mt-1 text-[10px] text-[#a1a1aa] text-center">Receipt uploaded · enter details below</p>
+              </div>
+            ) : (
+              <div
+                onClick={() => receiptInputRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleReceiptImage(f); }}
+                className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed border-[#d4d4d8] bg-white p-5 hover:border-[#a1a1aa] hover:bg-[#f4f4f5] transition"
+              >
+                <Image className="h-5 w-5 text-[#a1a1aa]" />
+                <p className="text-xs text-[#71717a]">Upload receipt image <span className="text-[#a1a1aa]">optional</span></p>
+                <p className="text-[10px] text-[#a1a1aa]">JPG · PNG · PDF — displayed as reference while you fill in the fields</p>
+              </div>
+            )}
+          </div>
+
+          {/* Manual fields */}
           <div className="space-y-3">
-            {/* Vendor */}
             <div>
               <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Vendor / Merchant <span className="text-red-400">*</span></label>
               <input
@@ -199,8 +384,6 @@ export default function ExpenseNew() {
                 className="w-full rounded-xl border border-[#e4e4e7] bg-white px-4 py-2.5 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5"
               />
             </div>
-
-            {/* Total + Date */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Total Amount <span className="text-red-400">*</span></label>
@@ -227,8 +410,6 @@ export default function ExpenseNew() {
                 />
               </div>
             </div>
-
-            {/* Category */}
             <div>
               <label className="mb-1 block text-[11px] font-medium text-[#52525b]">Category</label>
               <select
@@ -240,70 +421,6 @@ export default function ExpenseNew() {
               </select>
             </div>
           </div>
-        </div>
-
-        {/* ── Voice memo ── */}
-        <div className="mt-4 rounded-2xl border border-[#e4e4e7] bg-[#fafafa] p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#e4e4e7] bg-white">
-                <Mic className="h-3.5 w-3.5 text-[#71717a]" />
-              </div>
-              <div>
-                <p className="text-sm font-medium">Voice Memo <span className="text-red-400 text-[11px] font-normal">required</span></p>
-                <p className="text-[11px] text-[#a1a1aa]">Describe the expense — amount, vendor, purpose, date</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={recording ? stopRecording : startRecording}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                recording
-                  ? 'border border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
-                  : 'bg-[#09090b] text-white hover:bg-[#27272a]'
-              }`}
-            >
-              {recording ? (
-                <><Square className="h-3 w-3 fill-red-500 text-red-500" /> Stop</>
-              ) : (
-                <><Mic className="h-3.5 w-3.5" /> Record</>
-              )}
-            </button>
-          </div>
-
-          <div className="relative">
-            <textarea
-              value={recording ? transcript + interimText : transcript}
-              onChange={(e) => { if (!recording) setTranscript(e.target.value); }}
-              readOnly={recording}
-              placeholder={'e.g. "Team lunch at The Coffee Collective, total was around $38, July 15th. Four of us, Q3 sprint planning."'}
-              rows={3}
-              className={`w-full resize-none rounded-xl border border-[#e4e4e7] bg-white px-4 py-3 text-sm text-[#09090b] placeholder-[#a1a1aa] outline-none transition focus:border-[#09090b] focus:ring-2 focus:ring-[#09090b]/5 ${
-                recording ? 'cursor-default select-none' : ''
-              }`}
-            />
-            {recording && (
-              <div className="pointer-events-none absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-                <span className="text-[10px] font-medium text-red-600">listening…</span>
-              </div>
-            )}
-          </div>
-
-          {transcript.trim() && !recording && (
-            <div className="mt-2 flex items-center justify-between">
-              <p className="flex items-center gap-1 text-[11px] text-[#22c55e]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#22c55e]" /> Ready
-              </p>
-              <button
-                type="button"
-                onClick={() => { setTranscript(''); finalRef.current = ''; }}
-                className="text-[11px] text-[#a1a1aa] hover:text-[#71717a]"
-              >
-                Clear
-              </button>
-            </div>
-          )}
         </div>
 
         {/* ── Policy notes ── */}
@@ -333,18 +450,18 @@ export default function ExpenseNew() {
           className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#09090b] py-3.5 text-sm font-semibold text-white shadow-lg shadow-black/10 transition hover:bg-[#27272a] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loading ? (
-            <><Loader2 className="h-4 w-4 animate-spin" /> Connecting to pipeline…</>
+            <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</>
           ) : (
             <><ArrowRight className="h-4 w-4" /> Analyze Expense</>
           )}
         </button>
 
-        {/* ── Pipeline steps ── */}
+        {/* ── Pipeline overview ── */}
         <div className="mt-8 grid grid-cols-3 gap-3">
           {[
-            { n: '1', label: 'Intent Extraction', desc: 'Parse spoken memo via browser' },
-            { n: '2', label: 'Receipt Data', desc: 'Manually entered receipt fields' },
-            { n: '3', label: 'Reconciliation', desc: 'Cross-modal + policy check' },
+            { n: '1', label: 'Audio → Intent', desc: 'Whisper transcribes · Groq extracts structured intent' },
+            { n: '2', label: 'Receipt Data', desc: 'Manual fields cross-referenced with voice memo' },
+            { n: '3', label: 'Reconciliation', desc: 'Groq reasons across both modalities · flags mismatches' },
           ].map((s) => (
             <div key={s.n} className="rounded-xl border border-[#e4e4e7] bg-[#fafafa] p-4">
               <div className="mb-2 flex h-6 w-6 items-center justify-center rounded-md border border-[#e4e4e7] bg-white text-[11px] font-bold text-[#52525b]">{s.n}</div>

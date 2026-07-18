@@ -33,6 +33,7 @@ export type ReconciledExpense = {
 // ── SSE event union ──────────────────────────────────────────────────────────
 export type SSEEvent =
   | { type: 'created'; id: string }
+  | { type: 'time_estimate'; seconds: number }
   | { type: 'step1_done'; audio_result: AudioResult }
   | { type: 'step2_done'; receipt_result: ReceiptResult }
   | { type: 'step3_running' }
@@ -42,12 +43,13 @@ export type SSEEvent =
 // ── Store ────────────────────────────────────────────────────────────────────
 type PipelineStore = {
   runId: string | null;
-  /** mirrors backend status: 'idle' | 'step1' | 'step3' | 'done' | 'error' */
   status: string;
   audioResult: AudioResult | null;
   receiptResult: ReceiptResult | null;
   reconciled: ReconciledExpense | null;
   errorMessage: string | null;
+  timeEstimate: number | null;
+  startedAt: number | null;
   pushEvent: (event: SSEEvent) => void;
   reset: () => void;
 };
@@ -59,6 +61,8 @@ const initial = {
   receiptResult: null,
   reconciled: null,
   errorMessage: null,
+  timeEstimate: null,
+  startedAt: null,
 };
 
 export const usePipelineStore = create<PipelineStore>((set) => ({
@@ -67,8 +71,10 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
   pushEvent(event) {
     switch (event.type) {
       case 'created':
-        // Pipeline has started — both steps 1 & 2 are now running in parallel
-        set({ runId: event.id, status: 'step1' });
+        set({ runId: event.id, status: 'step1', startedAt: Date.now() });
+        break;
+      case 'time_estimate':
+        set({ timeEstimate: event.seconds });
         break;
       case 'step1_done':
         set({ audioResult: event.audio_result });

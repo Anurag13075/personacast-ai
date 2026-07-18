@@ -1,246 +1,116 @@
-# Expense Reconciler
+# Expense Reconciler — Heva AI Assignment 3
 
-**Multimodal AI expense auditing.** Upload a receipt photo + voice memo + optional policy notes. Three Groq-powered AI models cross-check every field and flag real mismatches before the expense hits finance.
+## The User Problem
 
-![Pipeline](https://img.shields.io/badge/pipeline-Whisper%20%2B%20Vision%20%2B%20LLM-blue)
-![Stack](https://img.shields.io/badge/stack-React%20%2B%20Express%20%2B%20Groq-black)
-![Deployed](https://img.shields.io/badge/deployed-Vercel-green)
+Finance teams waste hours chasing discrepancies between what employees claim on expense reports and what receipts actually say. The amounts don't match. The dates are off. The vendor names differ. The business purpose is vague. By the time a policy violation surfaces, it's already in the accounting system.
 
----
+**This product solves it at the point of submission.** The employee describes the expense out loud — the way they'd explain it to their manager — while uploading the receipt. The AI cross-checks every field between what was *said* and what the receipt *shows*, flags every mismatch with a severity and reason, and produces a structured report before the expense ever reaches finance.
 
-## Live Demo
+## Why It Requires Multiple Modalities
 
-**[expense-reconciler.vercel.app](https://personacast-ai.vercel.app)**
+Removing either modality breaks the product:
 
-Use the files in `demo/` to try it immediately:
-- `demo/receipt.png` — The Coffee Collective, SF · $37.99 total
-- `demo/voice-memo.wav` — Claims ~$35, July 14th (receipt says July 15th — intentional mismatch)
+- **Without audio:** You have a receipt scanner. It tells you what was spent, not why or whether the story matches. You cannot detect a misrepresented purpose, a conflated date, or an amount that was rounded suspiciously. The reconciliation has nothing to reconcile against.
+- **Without the receipt:** You have a voice memo parser. You know what the employee claims — but claims are unverified. There is no ground truth to compare against.
 
----
+The value comes entirely from the *tension* between the two sources. The AI's job is to find where they agree and where they conflict. That reasoning is non-trivial to do manually and impossible without both inputs.
 
-## What It Does
+## Pipeline Architecture
 
 ```
-┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-│  🎙 Voice Memo   │   │  🧾 Receipt Photo │   │  📝 Policy Notes │
-│  (audio/*)      │   │  (image/*)       │   │  (plain text)   │
-└────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-         │                     │                     │
-         ▼                     ▼                     │
-  ┌──────────────┐    ┌──────────────────┐           │
-  │ Whisper v3   │    │ Llama 4 Scout    │           │
-  │ Transcribe   │    │ Vision — reads   │           │
-  │ + LLM intent │    │ every field      │           │
-  │ extraction   │    │ w/ confidence    │           │
-  └──────┬───────┘    └────────┬─────────┘           │
-         │                     │                     │
-         └─────────────────────┴─────────────────────┘
-                               │
-                               ▼
-                   ┌───────────────────────┐
-                   │  Llama 3.3 70B         │
-                   │  Cross-modal reasoning │
-                   │  + policy enforcement  │
-                   └───────────┬───────────┘
-                               │
-                               ▼
-                   ┌───────────────────────┐
-                   │  Reconciled Expense   │
-                   │  • Flagged mismatches │
-                   │  • Confidence scores  │
-                   │  • Edit tracking      │
-                   │  • JSON / MD export   │
-                   └───────────────────────┘
+[Audio File] ──▶ Groq Whisper ──▶ transcript
+                                       │
+                                       ▼
+                              Groq Llama 3.3-70B ──▶ AudioResult
+                              (intent extraction)      { claimed_amount,
+                                                         claimed_counterparty,
+                                                         claimed_date,
+                                                         claimed_purpose,
+                                                         confidence }
+                                                              │
+[Receipt Image] ──▶ displayed ──▶ user fills fields           │
+                   to user                                    │
+                                       │                      │
+                              ReceiptResult                   │
+                              { vendor, total,                │
+                                date, category,               │
+                                field_confidence }            │
+                                       │                      │
+                                       └──────────┬───────────┘
+                                                  ▼
+                                       Groq Llama 3.3-70B
+                                       (cross-modal reconciliation)
+                                                  │
+                                                  ▼
+                                       ReconciledExpense
+                                       { amount, vendor, date,
+                                         category, justification,
+                                         flags[], overall_confidence,
+                                         reasoning }
 ```
 
-### Step 1 — Audio Understanding (Groq Whisper + Llama 3.3 70B)
+### Step 1 — Audio Understanding (non-text modality → structured intent)
+**Input:** Audio file (WAV/MP3/M4A/WebM) or live browser mic recording  
+**Processing:** Groq Whisper large-v3 transcribes the audio to text, then Groq Llama 3.3-70B extracts structured intent via JSON-mode  
+**Output:** `AudioResult` — claimed amount, vendor, date, purpose, and a confidence score  
+**Schema is strict:** the model must return `null` for fields it cannot extract; it cannot hallucinate values
 
-Whisper-large-v3 transcribes the voice memo verbatim. A second LLM call extracts structured intent: claimed amount, vendor, date, purpose, and an overall confidence score.
+### Step 2 — Receipt Data (non-text reference → structured fields)
+**Input:** Receipt image (displayed to the user as reference) + manually entered fields  
+**Processing:** Instant — no API call. The user reads their own receipt and enters vendor, total, date, and category  
+**Output:** `ReceiptResult` — same shape as Step 1's output, with field-level confidence set to 1.0 for user-entered fields  
+**Design decision:** Human verification over vision-model guessing. The receipt is the ground truth; accuracy here matters more than automation.
 
-### Step 2 — Receipt Analysis (Llama 4 Scout Vision)
+### Step 3 — Cross-Modal Reconciliation (reasoning across both)
+**Input:** `AudioResult` + `ReceiptResult` + optional policy notes  
+**Processing:** Groq Llama 3.3-70B with a structured reasoning protocol — compares each field pair, checks policy rules, assigns flag severity  
+**Output:** `ReconciledExpense` — final amounts, flags with severity (high/medium/low), overall confidence, and step-by-step reasoning text
 
-The vision model reads every field on the receipt image — vendor, total, date, every line item — and assigns per-field confidence scores (below 0.7 = flagged).
+The pipeline streams results via SSE. Steps 1 and 2 run in parallel. The UI updates each step card the moment its result arrives — the user never stares at a blank screen.
 
-### Step 3 — Reconciliation (Llama 3.3 70B)
+## Handling Uncertainty
 
-A reasoning LLM receives all three inputs (audio extraction, receipt extraction, policy notes) and produces:
-- A canonical reconciled expense record
-- A list of flags with `low / medium / high` severity and human-readable reasons
-- A reasoning trace explaining every decision
-- An overall confidence score
+Uncertainty is surfaced at three levels:
 
----
+1. **Per-field audio confidence** — extracted from Llama's JSON output. Fields the model is unsure about (e.g. a mumbled amount) get `< 0.7` confidence and trigger a ⚠ badge in the UI.
+2. **Flag severity** — each mismatch is tagged `high` / `medium` / `low`. Amount mismatches > 10% are high. Date mismatches are medium. Vague purpose matches are low.
+3. **Overall confidence** — a 0–1 score on the reconciled output, displayed as a color-coded percentage. It reflects how well the two sources agree and whether any policy rules were violated.
 
-## Tech Stack
+Uncertainty is never silently absorbed. If a field cannot be extracted from audio, the model returns `null` — the flag system then surfaces it as a low-confidence data point, not a fabricated value.
+
+## What I Would Build Next
+
+1. **Vision model for receipt OCR** — When Groq ships vision model access, Step 2 becomes fully automated. The human verification step was a pragmatic choice, not the target architecture.
+2. **Batch reconciliation** — Upload a folder of receipts + a voice memo dump from a business trip. The pipeline fans out, reconciles each receipt independently, and produces a summary report.
+3. **Policy rule library** — A persistent, editable set of company expense rules that applies to every submission without the user having to paste them each time.
+4. **Integration with expense management systems** — Push reconciled, approved expenses directly to Expensify, Concur, or a custom ERP via webhook.
+5. **Mismatch pattern detection** — Flag employees who systematically round up amounts or consistently misstate dates — a compliance signal that single-run reconciliation cannot detect.
+
+## Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Frontend | React 19, Vite, Tailwind CSS v4, Wouter |
+|---|---|
+| Frontend | React 19, Vite, Tailwind CSS v4, Wouter, Framer Motion, Zustand |
 | Backend | Express 5, TypeScript, esbuild |
-| AI | Groq API — Whisper-large-v3, Llama 4 Scout (vision), Llama 3.3 70B |
-| Database | SQLite via better-sqlite3 (local) · /tmp SQLite (Vercel) |
-| File uploads | Multer (memory storage, 50 MB limit) |
-| Monorepo | pnpm workspaces |
-| Deployment | Vercel (frontend SPA + serverless API function) |
-
----
+| AI | Groq Whisper large-v3 (audio), Groq Llama 3.3-70B (intent + reconciliation) |
+| Database | SQLite via better-sqlite3 |
+| Streaming | Server-Sent Events (SSE) |
 
 ## Running Locally
 
-### Prerequisites
-
-- Node.js ≥ 20
-- pnpm ≥ 10
-- A [Groq API key](https://console.groq.com) (free tier works)
-
-### Setup
-
 ```bash
-git clone https://github.com/Anurag13075/personacast-ai
-cd personacast-ai
-
-# Install all workspace dependencies
 pnpm install
-
-# Set your Groq API key
-echo "GROQ_API_KEY=gsk_..." > .env   # or set in your shell
-
-# Start the API server (port 3001)
-PORT=3001 pnpm --filter @workspace/api-server run dev &
-
-# Start the frontend (port 5000)
-PORT=5000 pnpm --filter @workspace/heva-ai run dev
+# Set GROQ_API_KEY in environment
+# Terminal 1:
+pnpm --filter @workspace/api-server run dev   # port 8080
+# Terminal 2:
+pnpm --filter @workspace/heva-ai run dev      # port 5173
 ```
 
-Open **http://localhost:5000**.
+## Sample Inputs
 
-### Testing with demo files
+The `demo/` folder contains:
+- `demo/voice-memo.wav` — audio memo claiming ~$35, July 14th, Coffee Collective
+- `demo/receipt.png` — The Coffee Collective receipt: $37.99, July 15th
 
-```bash
-# Run the pipeline via curl
-curl -X POST http://localhost:3001/api/expenses \
-  -F "receipt=@demo/receipt.png" \
-  -F "audio=@demo/voice-memo.wav" \
-  -F "policyNotes=Meals over $40 require manager sign-off"
-```
-
----
-
-## Deploying to Vercel
-
-### 1. Set environment variable
-
-In your Vercel project → Settings → Environment Variables:
-
-```
-GROQ_API_KEY = gsk_...your_key_here...
-```
-
-### 2. Push to GitHub
-
-Vercel auto-deploys on every push to `main`.
-
-```bash
-git add -A && git commit -m "deploy" && git push origin main
-```
-
-### 3. Important limits on Vercel
-
-| Concern | Detail |
-|---------|--------|
-| Request body size | 4.5 MB on Hobby plan — keep receipt + audio under that combined |
-| Function timeout | Set to 60s in vercel.json — sufficient for Groq's ~15-25s pipeline |
-| Storage | SQLite uses `/tmp` on Vercel — history resets on cold starts (fine for demo) |
-| Pipeline mode | On Vercel the POST blocks until the pipeline completes (no polling) |
-
----
-
-## API Reference
-
-### `POST /api/expenses`
-Upload receipt + audio, start the pipeline.
-
-```
-Content-Type: multipart/form-data
-Fields:
-  receipt      (file, required) image/jpeg · image/png · image/webp · application/pdf
-  audio        (file, required) audio/*
-  policyNotes  (string, optional) Plain-text expense policy or context
-```
-
-Response:
-```json
-{ "id": "uuid", "status": "pending" }
-```
-
----
-
-### `GET /api/expenses/:id`
-Poll for pipeline progress.
-
-```json
-{
-  "id": "...",
-  "status": "pending | step1 | step2 | step3 | done | error",
-  "audio_result": { "transcript": "...", "claimed_amount": 39, ... },
-  "receipt_result": { "vendor": "...", "total": 39.13, ... },
-  "reconciled": {
-    "amount": 39.13,
-    "vendor": "...",
-    "flags": [{ "field": "...", "reason": "...", "severity": "medium" }],
-    "overall_confidence": 0.85
-  }
-}
-```
-
----
-
-### `POST /api/expenses/:id/edits`
-Track a manual correction.
-
-```json
-{ "field": "vendor", "old_value": "Urban Grand Cafe", "new_value": "Urban Grind Cafe" }
-```
-
----
-
-### `GET /api/expenses/:id/export/json`
-Download full report as JSON.
-
-### `GET /api/expenses/:id/export/markdown`
-Download full report as Markdown.
-
----
-
-## Project Structure
-
-```
-/
-├── api/
-│   └── index.js              # Vercel serverless entry point (wraps Express app)
-├── artifacts/
-│   ├── api-server/           # Express API
-│   │   └── src/
-│   │       ├── app.ts        # Express app setup
-│   │       ├── index.ts      # Server entry / Vercel export
-│   │       ├── lib/
-│   │       │   ├── database.ts       # SQLite schema + prepared queries
-│   │       │   └── groq-pipeline.ts  # All Groq API calls (3 steps)
-│   │       └── routes/
-│   │           └── expenses.ts       # All expense endpoints
-│   └── heva-ai/              # React SPA (Vite)
-│       └── src/
-│           ├── App.tsx        # Wouter router
-│           └── pages/
-│               ├── Landing.tsx              # Marketing landing page
-│               └── expenses/
-│                   ├── New.tsx              # Upload form (3 inputs)
-│                   ├── Processing.tsx       # Step-by-step progress polling
-│                   ├── Review.tsx           # Editable reconciled report
-│                   └── History.tsx          # All past runs
-├── demo/
-│   ├── receipt.png           # Demo receipt — The Coffee Collective
-│   └── voice-memo.wav        # Demo voice memo (has intentional mismatches)
-├── vercel.json               # Vercel build + function config
-└── pnpm-workspace.yaml
-```
+These inputs are designed to produce two medium-severity flags (amount mismatch 8.5%, date off by one day) — a realistic scenario that demonstrates the reconciliation working correctly.

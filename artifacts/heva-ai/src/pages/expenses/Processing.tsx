@@ -62,6 +62,16 @@ export default function ExpenseProcessing() {
   const store = usePipelineStore();
   const hasStoreData = store.runId === params.id && store.status !== 'idle';
 
+  // ── Countdown from time estimate ──────────────────────────────────────────
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!hasStoreData || store.status === 'done' || store.status === 'error') return;
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - (store.startedAt ?? Date.now())) / 1000)), 500);
+    return () => clearInterval(t);
+  }, [hasStoreData, store.status, store.startedAt]);
+  const estimatedSeconds = store.timeEstimate;
+  const remaining = estimatedSeconds != null ? Math.max(0, estimatedSeconds - elapsed) : null;
+
   // ── Polling fallback (direct nav / page refresh) ──────────────────────────
   const [polledRun, setPolledRun] = useState<Run | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -168,9 +178,16 @@ export default function ExpenseProcessing() {
               <span className="font-medium">Pipeline error</span>
             </div>
           ) : (
-            <div className="flex items-center justify-center gap-2 text-white/60">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">Running AI pipeline…</span>
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex items-center gap-2 text-white/60">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Running AI pipeline…</span>
+              </div>
+              {remaining != null && (
+                <span className="rounded-full bg-white/8 px-3 py-1 text-[11px] text-white/40">
+                  {remaining > 0 ? `~${remaining}s remaining` : 'almost done…'}
+                </span>
+              )}
             </div>
           )}
         </div>

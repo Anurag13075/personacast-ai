@@ -149,6 +149,10 @@ export default function ExpenseReview() {
     window.open(`/api/expenses/${params.id}/export/markdown`, '_blank');
   };
 
+  const exportPdf = () => {
+    window.print();
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#05060f] text-white/40">
@@ -418,13 +422,19 @@ export default function ExpenseReview() {
             onClick={exportJson}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 py-3 text-sm text-white/70 hover:border-white/30 hover:text-white transition"
           >
-            <Download className="h-4 w-4" /> Export JSON
+            <Download className="h-4 w-4" /> JSON
           </button>
           <button
             onClick={exportMarkdown}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 py-3 text-sm text-white/70 hover:border-white/30 hover:text-white transition"
           >
-            <Download className="h-4 w-4" /> Export Markdown
+            <Download className="h-4 w-4" /> Markdown
+          </button>
+          <button
+            onClick={exportPdf}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 py-3 text-sm text-white/70 hover:border-white/30 hover:text-white transition"
+          >
+            <Download className="h-4 w-4" /> PDF
           </button>
         </section>
       </main>
